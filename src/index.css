@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+:root {
+  color-scheme: light;
+}
+
 @theme {
   --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Arial", sans-serif;
   --font-display: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Arial", sans-serif;
@@ -12,7 +16,7 @@
 
 body {
   font-family: var(--font-sans);
-  background-color: #0f1115;
+  background-color: #F7F8FA;
   color: #191c1e;
   margin: 0;
   padding: 0;
