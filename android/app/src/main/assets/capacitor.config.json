@@ -1,0 +1,6 @@
+{
+	"appId": "com.dddaijia.driver",
+	"appName": "DD代驾司机端",
+	"webDir": "dist",
+	"bundledWebRuntime": false
+}

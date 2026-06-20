@@ -453,77 +453,28 @@ export default function App() {
   };
 
   return (
-    <div className="h-screen w-screen bg-[#07080b] flex flex-col md:flex-row overflow-hidden font-sans antialiased text-slate-200">
-      
-      {/* Mobile top navigation switcher bar - only dynamic on smaller screens */}
-      <div className="md:hidden bg-[#0e1017] border-b border-slate-900 px-4 py-2 flex items-center justify-between shrink-0">
-        <div className="flex items-center space-x-1.5">
-          <div className="w-2 h-2 rounded-full bg-teal-500 animate-pulse"></div>
-          <span className="text-xs font-black tracking-wide text-slate-100">一键代驾调度台</span>
-        </div>
-        <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-900">
-          <button
-            type="button"
-            onClick={() => setMobileActiveTab('app')}
-            className={`px-3 py-1 rounded-lg text-[10px] font-black tracking-wider flex items-center gap-1 transition-all uppercase ${
-              mobileActiveTab === 'app'
-                ? 'bg-[#189F95] text-white font-bold'
-                : 'text-slate-500 hover:text-slate-300'
-            }`}
-          >
-            <Smartphone className="w-3 h-3" />
-            司机手机端
-          </button>
-          <button
-            type="button"
-            onClick={() => setMobileActiveTab('admin')}
-            className={`px-3 py-1 rounded-lg text-[10px] font-black tracking-wider flex items-center gap-1 transition-all uppercase ${
-              mobileActiveTab === 'admin'
-                ? 'bg-[#189F95] text-white font-bold'
-                : 'text-slate-500 hover:text-slate-300'
-            }`}
-          >
-            <Database className="w-3 h-3" />
-            运营管理后台
-          </button>
+    <div className="h-screen w-screen bg-[#07080b] flex items-center justify-center font-sans antialiased overflow-hidden text-slate-200">
+      {/* 
+        在手机端/模拟器端（如 HBuilderX、Capacitor、雷神模拟器），直接 100% 铺满屏幕，无边框和内外边距；
+        在电脑端（宽屏幕），则优雅呈现为外置手机框模型，保持良好的预览体验。
+      */}
+      <div className="relative w-full h-full sm:max-w-[420px] sm:h-[92vh] sm:max-h-[860px] sm:rounded-[40px] sm:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.85)] sm:border-8 sm:border-[#1e293b] bg-[#f8fafc] flex flex-col overflow-hidden transition-all duration-300">
+        <div className="flex-1 flex flex-col relative overflow-hidden">
+          {renderView()}
+
+          {/* 顶层浮动通知提示 */}
+          {showToast && (
+            <div className="absolute top-16 left-4 right-4 bg-teal-600/95 border border-teal-400/20 text-white p-3 rounded-2xl shadow-2xl z-50 animate-in fade-in slide-in-from-top-4 duration-300 flex items-start space-x-2.5">
+              <div className="w-5 h-5 rounded-full bg-emerald-400/20 text-emerald-300 flex items-center justify-center shrink-0 mt-0.5">
+                <CheckCircle className="w-3.5 h-3.5 fill-current" />
+              </div>
+              <span className="text-xs font-semibold leading-relaxed tracking-wide font-sans">
+                {toastMessage}
+              </span>
+            </div>
+          )}
         </div>
       </div>
-
-      {/* Main workspaces layout container */}
-      <div className="flex-1 flex flex-col md:flex-row min-h-0 min-w-0 bg-[#07080b]">
-        
-        {/* Mobile View Container - App Interface */}
-        <div className={`flex-1 md:flex-initial flex items-center justify-center bg-[#07080a] ${
-          mobileActiveTab === 'app' ? 'flex' : 'hidden md:flex'
-        }`} style={{ minWidth: '380px' }}>
-          <div className="w-full h-full flex items-center justify-center p-0 md:p-4 lg:p-6">
-            <PhoneFrame>
-              {renderView()}
-
-              {/* Reusable premium float action toast element inside phone frame */}
-              {showToast && (
-                <div className="absolute top-16 left-4 right-4 bg-teal-600/95 border border-teal-400/20 text-white p-3 rounded-2xl shadow-2xl z-50 animate-in fade-in slide-in-from-top-4 duration-300 flex items-start space-x-2.5">
-                  <div className="w-5 h-5 rounded-full bg-emerald-400/20 text-emerald-300 flex items-center justify-center shrink-0 mt-0.5">
-                    <CheckCircle className="w-3.5 h-3.5 fill-current" />
-                  </div>
-                  <span className="text-xs font-semibold leading-relaxed tracking-wide font-sans">
-                    {toastMessage}
-                  </span>
-                </div>
-              )}
-            </PhoneFrame>
-          </div>
-        </div>
-
-        {/* Mobile View Container - Admin System Dashboard */}
-        <div className={`flex-1 border-t md:border-t-0 md:border-l border-slate-900/60 transition-all ${
-          mobileActiveTab === 'admin' ? 'flex' : 'hidden md:flex'
-        }`}>
-          <AdminPanel />
-        </div>
-
-      </div>
-
     </div>
   );
 }
