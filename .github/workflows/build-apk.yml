@@ -21,17 +21,13 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
 
       # 3. 安装依赖并编译 Web 端资源 (Vite -> dist)
       - name: Install Dependencies & Build Web App
         run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
-          fi
+          npm install --no-audit --no-fund
           npm run build
 
       # 4. 同步 Capacitor 资源到 Android 工程
