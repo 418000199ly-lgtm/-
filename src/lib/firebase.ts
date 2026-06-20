@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
   projectId: "autonomous-abbey-nnzsc",
@@ -12,8 +12,10 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 
-// Initialize Firestore with the custom database ID from config
-const db = getFirestore(app, "ai-studio-8c2c2304-5251-4eae-b3b7-9bbf375467a5");
+// Initialize Firestore with custom settings to enforce long polling, bypassing iframe WebSocket limits
+const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true
+}, "ai-studio-8c2c2304-5251-4eae-b3b7-9bbf375467a5");
 
 export { app, db };
 
