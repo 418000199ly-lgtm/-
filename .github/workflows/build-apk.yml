@@ -27,7 +27,7 @@ jobs:
       # 3. 安装依赖并编译 Web 端资源 (Vite -> dist)
       - name: Install Dependencies & Build Web App
         run: |
-          npm install --no-audit --no-fund
+          npm install --legacy-peer-deps --no-audit --no-fund
           npm run build
 
       # 4. 同步 Capacitor 资源到 Android 工程
