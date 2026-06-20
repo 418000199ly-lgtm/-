@@ -21,8 +21,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-size: 'large'
-          node-version: 18
+          node-version: 20
           cache: 'npm'
 
       # 3. 安装依赖并编译 Web 端资源 (Vite -> dist)
@@ -40,12 +39,12 @@ jobs:
         run: |
           npx cap sync
 
-      # 5. 设置 Java 17 环境 (Android SDK 编译需要)
-      - name: Setup Java JDK 17
+      # 5. 设置 Java 21 环境 (配置新版本 Android SDK 与 AGP 8.8+ 所需)
+      - name: Setup Java JDK 21
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu' # 常用的 Java 发行版
-          java-version: '17'
+          distribution: 'zulu'
+          java-version: '21'
 
       # 6. 缓存 Gradle 依赖，加快后续打包速度
       - name: Cache Gradle Dependencies
