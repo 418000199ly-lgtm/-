@@ -53,11 +53,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      # 6.5 修复可能损坏的 gradle-wrapper.jar 文件 (从官方源重新下载)
+      # 6.5 修复可能损坏的 gradle-wrapper.jar 文件 (用 runner 自带的 gradle 重新生成)
       - name: Fix Gradle Wrapper Jar
         run: |
-          mkdir -p android/gradle/wrapper
-          curl -Lo android/gradle/wrapper/gradle-wrapper.jar https://raw.githubusercontent.com/gradle/gradle/v8.7.0/gradle/wrapper/gradle-wrapper.jar
+          cd android
+          gradle wrapper --gradle-version 8.7 --distribution-type all
 
       # 7. 给 gradlew 可执行权限，并使用 Gradle 编译 Android APK
       - name: Build Android APK
