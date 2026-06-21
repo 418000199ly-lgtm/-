@@ -881,14 +881,15 @@ export default function HomeView({
         {/* Central Physical-styled slide-to-online switch */}
         <div 
           ref={sliderWidthRef}
-          className={`flex-1 relative h-13 rounded-2xl flex items-center justify-center overflow-hidden border shadow-inner transition-colors duration-300 ${
+          onClick={handleSlideToggleClick}
+          className={`flex-1 relative h-13 rounded-2xl flex items-center justify-center overflow-hidden border shadow-inner transition-colors duration-300 cursor-pointer touch-none ${
             isOnline ? 'bg-emerald-500 border-emerald-600/30' : 'bg-[#94a3b8] border-slate-400'
           }`}
         >
           {/* Swipe guide text */}
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
             <span className="text-[12px] font-bold tracking-wider text-white drop-shadow-xs">
-              {isOnline ? '右滑下线停止报单' : '右滑上线开始报单'}
+              {isOnline ? '右滑或轻点下线停止报单' : '右滑或轻点上线开始报单'}
             </span>
           </div>
 
@@ -897,12 +898,15 @@ export default function HomeView({
             onTouchStart={handleTouchStart}
             onTouchMove={handleTouchMove}
             onTouchEnd={handleTouchEnd}
-            onClick={handleSlideToggleClick}
+            onClick={(e) => {
+              e.stopPropagation(); // Avoid double click trigger
+              handleSlideToggleClick();
+            }}
             style={{ 
               transform: `translateX(${sliderPos}px)`,
               transition: isSliding ? 'none' : 'transform 0.25s cubic-bezier(0.16, 1, 0.3, 1)'
             }}
-            className={`absolute left-1.5 w-12 h-10 select-none rounded-xl flex items-center justify-center shadow-md cursor-pointer transform transition-all active:scale-95 bg-white ${
+            className={`absolute left-1.5 w-12 h-10 select-none rounded-xl flex items-center justify-center shadow-md cursor-pointer transform transition-all active:scale-95 bg-white touch-none ${
               isOnline ? 'text-emerald-600' : 'text-slate-600'
             }`}
           >

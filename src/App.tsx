@@ -78,7 +78,7 @@ export default function App() {
 
   const [isOnline, setIsOnline] = useState<boolean>(() => {
     const cached = localStorage.getItem('dd_is_online');
-    return cached ? JSON.parse(cached) === 'true' : false;
+    return cached === 'true';
   });
 
   const [currentView, setCurrentView] = useState<string>('home');
