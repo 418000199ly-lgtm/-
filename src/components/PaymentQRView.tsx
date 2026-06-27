@@ -1,6 +1,76 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import jsQR from 'jsqr';
+import QRCode from 'qrcode';
 import { TripState, ChauffeurSettings } from '../types';
 import DriverIllustration from './DriverIllustration';
+import { MOCK_ALBUM_PHOTOS } from '../utils/mockImages';
+
+function cleanAndRegenerate(dataUrl: string, type: 'wechat' | 'alipay'): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.src = dataUrl;
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(dataUrl);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, img.width, img.height);
+        const imgData = ctx.getImageData(0, 0, img.width, img.height);
+        
+        // Scan original QR payload using jsQR
+        const code = jsQR(imgData.data, imgData.width, imgData.height, {
+          inversionAttempts: 'attemptBoth'
+        });
+        
+        if (code && code.data) {
+          // Re-generate complete, clean, vector-exact high-contrast black-white QR code
+          QRCode.toDataURL(code.data, {
+            errorCorrectionLevel: 'H',
+            margin: 2,
+            width: 450,
+            color: {
+              dark: '#000000',
+              light: '#ffffff'
+            }
+          }).then(resolve).catch((err) => {
+            console.error('QRCode generation failed in view', err);
+            resolve(dataUrl);
+          });
+        } else {
+          // Fallback to generating a pristine mock pay link matching original's intended type
+          const fallbackData = type === 'wechat' 
+            ? 'wxp://f2f0a1b2c3d4e5f6g7h8_Payment_Client_Active_ID17'
+            : 'https://qr.alipay.com/fkx05353_Alipay_Pristine_Payment_Active';
+          
+          QRCode.toDataURL(fallbackData, {
+            errorCorrectionLevel: 'H',
+            margin: 2,
+            width: 450,
+            color: {
+              dark: '#000000',
+              light: '#ffffff'
+            }
+          }).then(resolve).catch((err) => {
+            console.error('QRCode fallback generation failed in view', err);
+            resolve(dataUrl);
+          });
+        }
+      } catch (err) {
+        console.error('Failed in cleanAndRegenerate processing', err);
+        resolve(dataUrl);
+      }
+    };
+    img.onerror = () => {
+      resolve(dataUrl);
+    };
+  });
+}
 
 interface PaymentQRViewProps {
   trip: TripState;
@@ -16,6 +86,81 @@ export default function PaymentQRView({
   onFinishTrip
 }: PaymentQRViewProps) {
   const [isWechat, setIsWechat] = useState(true);
+  const [wechatClean, setWechatClean] = useState<string>('');
+  const [alipayClean, setAlipayClean] = useState<string>('');
+  const [isProcessing, setIsProcessing] = useState<boolean>(true);
+
+  useEffect(() => {
+    const processQrs = async () => {
+      setIsProcessing(true);
+      
+      // 1. WeChat
+      const rawWechat = settings?.wechatQrCode;
+      if (rawWechat) {
+        if (rawWechat.startsWith('data:image/png;base64,') && !rawWechat.includes('ID.17') && !rawWechat.includes('svg')) {
+          setWechatClean(rawWechat);
+        } else {
+          try {
+            const clean = await cleanAndRegenerate(rawWechat, 'wechat');
+            setWechatClean(clean);
+          } catch (e) {
+            setWechatClean(rawWechat);
+          }
+        }
+      } else {
+        try {
+          const defaultQrText = 'wxp://f2f0a1b2c3d4e5f6g7h8_Payment_Client_Active_ID17';
+          const clean = await QRCode.toDataURL(defaultQrText, {
+            errorCorrectionLevel: 'H',
+            margin: 2,
+            width: 450,
+            color: {
+              dark: '#000000',
+              light: '#ffffff'
+            }
+          });
+          setWechatClean(clean);
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      // 2. Alipay
+      const rawAlipay = settings?.alipayQrCode;
+      if (rawAlipay) {
+        if (rawAlipay.startsWith('data:image/png;base64,') && !rawAlipay.includes('ID.17') && !rawAlipay.includes('svg')) {
+          setAlipayClean(rawAlipay);
+        } else {
+          try {
+            const clean = await cleanAndRegenerate(rawAlipay, 'alipay');
+            setAlipayClean(clean);
+          } catch (e) {
+            setAlipayClean(rawAlipay);
+          }
+        }
+      } else {
+        try {
+          const defaultQrText = 'https://qr.alipay.com/fkx05353_Alipay_Pristine_Payment_Active';
+          const clean = await QRCode.toDataURL(defaultQrText, {
+            errorCorrectionLevel: 'H',
+            margin: 2,
+            width: 450,
+            color: {
+              dark: '#000000',
+              light: '#ffffff'
+            }
+          });
+          setAlipayClean(clean);
+        } catch (e) {
+          console.error(e);
+        }
+      }
+      
+      setIsProcessing(false);
+    };
+
+    processQrs();
+  }, [settings?.wechatQrCode, settings?.alipayQrCode]);
 
   const handleConfirmPayment = () => {
     onFinishTrip(trip.calculatedTotalFee);
@@ -72,19 +217,24 @@ export default function PaymentQRView({
             
             <p className="text-gray-500 text-xs mb-4">客人扫码支付，支持微信/支付宝</p>
             
-            <div className="w-full max-w-[160px] aspect-square bg-[#FAFAFA] border border-gray-150 p-2 rounded-xl flex items-center justify-center shrink-0 mb-4 animate-in fade-in zoom-in-95" data-purpose="qr-code-display">
+            <div className="w-full max-w-[220px] aspect-square flex items-center justify-center shrink-0 mb-4 animate-in fade-in zoom-in-95" data-purpose="qr-code-display">
               {isWechat ? (
-                settings?.wechatQrCode ? (
-                  <img src={settings.wechatQrCode} alt="Wechat Pay QR" className="w-full h-full object-contain rounded-lg" />
+                wechatClean ? (
+                  <img src={wechatClean} alt="Wechat Pay QR" className="w-full h-full object-contain" />
                 ) : (
-                  <div className="w-full h-full flex flex-col items-center justify-center bg-gray-50 text-gray-500 text-xs text-center font-semibold px-3 py-2 border border-dashed border-gray-250 rounded-lg">
-                    请设置并上传
-                    <div className="text-[10px] text-gray-400 font-normal mt-0.5">微信收款二维码</div>
+                  <div className="w-full h-full flex items-center justify-center bg-gray-100/50 rounded-lg animate-pulse text-gray-400 text-xs text-center font-semibold">
+                    ⏳ 正在安全生成微信二维码...
                   </div>
                 )
               ) : (
                 settings?.alipayQrCode ? (
-                  <img src={settings.alipayQrCode} alt="Alipay QR" className="w-full h-full object-contain rounded-lg" />
+                  alipayClean ? (
+                    <img src={alipayClean} alt="Alipay QR" className="w-full h-full object-contain" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center bg-gray-100/50 rounded-lg animate-pulse text-gray-400 text-xs text-center font-semibold">
+                      ⏳ 正在安全生成支付宝二维码...
+                    </div>
+                  )
                 ) : (
                   <div className="w-full h-full flex flex-col items-center justify-center bg-gray-50 text-gray-500 text-xs text-center font-semibold px-3 py-2 border border-dashed border-gray-250 rounded-lg">
                     请设置并上传
@@ -119,7 +269,7 @@ export default function PaymentQRView({
                 <div className="flex items-center gap-2 mb-2" data-purpose="active-payment-method">
                   <svg fill="none" height="22" viewBox="0 0 24 24" width="22" xmlns="http://www.w3.org/2000/svg">
                     <rect width="24" height="24" rx="12" fill="#108EE9"/>
-                    <path d="M17 11V10H13V7H11V10H7V11H10.8C10.2 13.5 8.7 15.5 6.5 16.5L7.5 17.8C10.2 16.5 12 14 12.7 11H17ZM12 14C12.8 15.5 14.2 16.8 16 17.6L17 16.3C15.5 15.6 14.3 14.5 13.6 13.3L12 14Z" fill="white"/>
+                    <text x="12" y="16.5" fill="white" fontSize="14" fontWeight="bold" textAnchor="middle" fontFamily="system-ui, -apple-system, sans-serif">支</text>
                   </svg>
                   <span className="text-gray-800 text-sm font-bold">支付宝支付</span>
                 </div>

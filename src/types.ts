@@ -59,6 +59,7 @@ export interface TripState {
   calculatedBaseFee: number;
   calculatedTotalFee: number;
   weatherMultiplier?: number;
+  isOnlineOrder?: boolean;
 }
 
 export interface DriverStats {

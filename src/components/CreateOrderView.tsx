@@ -1,11 +1,20 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { QrCode, Clock, RotateCw, CheckCircle2 } from 'lucide-react';
 import { BillingRules, TripState, ChauffeurSettings } from '../types';
-import { db } from '../lib/firebase';
-import { doc, onSnapshot, deleteDoc } from 'firebase/firestore';
+import { db, doc, onSnapshot, deleteDoc, setDoc } from '../lib/dbProxy';
 import PassengerOrderView from './PassengerOrderView';
 
 const MULTIPLIER_OPTIONS = Array.from({ length: 11 }, (_, i) => Number((1.0 + i * 0.1).toFixed(1))); // [1.0, 1.1, ..., 2.0]
+
+const SUGGESTED_DESTINATIONS = [
+  '银川火车站',
+  '建发大阅城',
+  '新华百货(鼓楼店)',
+  '金凤万达广场',
+  '悦海新天地购物广场',
+  '银川河东国际机场',
+  '阅海湾中央商务区',
+];
 
 // Beautiful dynamically generated QR code SVG based on seed/counter
 const SvgQrCode = ({ seed, url }: { seed: number; url?: string }) => {
@@ -93,7 +102,362 @@ export default function CreateOrderView({
   });
   const [destination, setDestination] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
+
+  const startLocationRef = useRef(startLocation);
+  const destinationRef = useRef(destination);
+
+  useEffect(() => {
+    startLocationRef.current = startLocation;
+  }, [startLocation]);
+
+  useEffect(() => {
+    destinationRef.current = destination;
+  }, [destination]);
   const [isEditingStart, setIsEditingStart] = useState(false);
+
+  const [showDestinationSearch, setShowDestinationSearch] = useState(false);
+  const [searchText, setSearchText] = useState('');
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+
+  // AMap AutoComplete suggestions
+  useEffect(() => {
+    const AMap = (window as any).AMap;
+    if (!AMap || !searchText.trim()) {
+      setSuggestions([]);
+      return;
+    }
+    const delayDebounce = setTimeout(() => {
+      AMap.plugin('AMap.AutoComplete', () => {
+        try {
+          const auto = new AMap.AutoComplete({
+            city: registeredCity || '银川市',
+            citylimit: true
+          });
+          auto.search(searchText, (status: string, result: any) => {
+            if (status === 'complete' && result.tips) {
+              setSuggestions(result.tips.filter((t: any) => t.id && t.name));
+            } else {
+              setSuggestions([]);
+            }
+          });
+        } catch (e) {
+          console.warn('AutoComplete plugin failed:', e);
+        }
+      });
+    }, 200);
+
+    return () => clearTimeout(delayDebounce);
+  }, [searchText, registeredCity]);
+
+
+  // Real Web Gaode (AMap) API Integration
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const [mapLoaded, setMapLoaded] = useState(false);
+  const mapInstanceRef = useRef<any>(null);
+  const isMapMovingProgrammaticallyRef = useRef<boolean>(false);
+  const isUserDraggingRef = useRef<boolean>(false);
+  const debounceTimerRef = useRef<any>(null);
+
+  useEffect(() => {
+    // 1. Configure the Gaode Security Key
+    (window as any)._AMapSecurityConfig = {
+      securityJsCode: '0aa3912e6a88fe59f9e5f0275524feba'
+    };
+
+    const scriptId = 'amap-js-api-v2';
+    let script = document.getElementById(scriptId) as HTMLScriptElement;
+
+    const initializeMap = () => {
+      const AMap = (window as any).AMap;
+      if (!AMap || !mapContainerRef.current) return;
+
+      try {
+        // Initialize AMap strictly in 2D mode, with disabled manual rotatability/pitching
+        const map = new AMap.Map(mapContainerRef.current, {
+          zoom: 15,
+          center: [106.230912, 38.487193], // Default Yinchuan Wanda (银川万达) region
+          viewMode: '2D',
+          pitch: 0,
+          rotateEnable: false,
+          pitchEnable: false,
+          resizeEnable: true
+        });
+
+        mapInstanceRef.current = map;
+        setMapLoaded(true);
+
+        AMap.plugin(['AMap.Geocoder', 'AMap.Geolocation'], () => {
+          const geocoder = new AMap.Geocoder({
+            city: registeredCity || '银川市'
+          });
+
+          const fallbackGeolocation = () => {
+            isMapMovingProgrammaticallyRef.current = true;
+            geocoder.getLocation(startLocation, (locStatus: string, locResult: any) => {
+              isMapMovingProgrammaticallyRef.current = false;
+              if (locStatus === 'complete' && locResult.geocodes.length) {
+                const loc = locResult.geocodes[0].location;
+                map.setCenter([loc.lng, loc.lat]);
+              } else {
+                // IP fallback for virtual sandbox environments
+                AMap.plugin('AMap.CitySearch', () => {
+                  try {
+                    const citySearch = new AMap.CitySearch();
+                    citySearch.getLocalCity((cityStatus: string, cityResult: any) => {
+                      if (cityStatus === 'complete' && cityResult.bounds) {
+                        map.setBounds(cityResult.bounds);
+                      }
+                    });
+                  } catch (e) {
+                    console.warn('CitySearch failed:', e);
+                  }
+                });
+              }
+            });
+          };
+
+          try {
+            // Create Geolocation instance to auto-track user real coordinates and name
+            const geolocation = new AMap.Geolocation({
+              enableHighAccuracy: true,
+              timeout: 8000,
+              zoomToAccuracy: true,
+              buttonPosition: 'RB',
+              needAddress: true // retrieve address info along with coordinates
+            });
+
+            map.addControl(geolocation);
+
+            // Auto-locate user on open and sync name
+            isMapMovingProgrammaticallyRef.current = true;
+            geolocation.getCurrentPosition((status: string, result: any) => {
+              isMapMovingProgrammaticallyRef.current = false;
+              if (status === 'complete' && result.position) {
+                const coords = [result.position.lng, result.position.lat];
+                map.setCenter(coords);
+                
+                if (result.formattedAddress) {
+                  const formattedAddress = result.formattedAddress;
+                  // Parse address components safely
+                  const addressComp = result.addressComponent || {};
+                  let cleanLabel = formattedAddress;
+                  if (addressComp.province) cleanLabel = cleanLabel.replace(addressComp.province, '');
+                  if (addressComp.city) cleanLabel = cleanLabel.replace(addressComp.city, '');
+                  if (addressComp.district) cleanLabel = cleanLabel.replace(addressComp.district, '');
+                  
+                  if (!cleanLabel.trim()) {
+                    cleanLabel = formattedAddress;
+                  }
+                  setStartLocation(cleanLabel);
+                } else {
+                  geocoder.getAddress(coords, (geoStatus: string, geoResult: any) => {
+                    if (geoStatus === 'complete' && geoResult.regeocode) {
+                      const formattedAddress = geoResult.regeocode.formattedAddress;
+                      const addressComp = geoResult.regeocode.addressComponent || {};
+                      let cleanLabel = formattedAddress;
+                      if (addressComp.province) cleanLabel = cleanLabel.replace(addressComp.province, '');
+                      if (addressComp.city) cleanLabel = cleanLabel.replace(addressComp.city, '');
+                      if (addressComp.district) cleanLabel = cleanLabel.replace(addressComp.district, '');
+                      
+                      if (!cleanLabel.trim()) {
+                        cleanLabel = formattedAddress;
+                      }
+                      setStartLocation(cleanLabel);
+                    }
+                  });
+                }
+              } else {
+                fallbackGeolocation();
+              }
+            });
+          } catch (err) {
+            console.warn('Geolocation was blocked or failed, using city fallback:', err);
+            isMapMovingProgrammaticallyRef.current = false;
+            fallbackGeolocation();
+          }
+
+          const updateAddressFromMapCenter = () => {
+            if (isMapMovingProgrammaticallyRef.current || destinationRef.current.trim().length > 0) return;
+            const center = map.getCenter();
+            geocoder.getAddress([center.lng, center.lat], (geocodestatus: string, geocoderesult: any) => {
+              if (geocodestatus === 'complete' && geocoderesult.regeocode) {
+                const formattedAddress = geocoderesult.regeocode.formattedAddress;
+                const addressComp = geocoderesult.regeocode.addressComponent;
+                
+                // Keep only building description or neighborhood sub-info to look elegant & compact
+                let cleanLabel = formattedAddress;
+                if (addressComp.province) cleanLabel = cleanLabel.replace(addressComp.province, '');
+                if (addressComp.city) cleanLabel = cleanLabel.replace(addressComp.city, '');
+                if (addressComp.district) cleanLabel = cleanLabel.replace(addressComp.district, '');
+                
+                if (!cleanLabel.trim()) {
+                  cleanLabel = formattedAddress;
+                }
+                setStartLocation(cleanLabel);
+              }
+            });
+          };
+
+          // Track when the user is actively dragging the map
+          map.on('dragstart', () => {
+            isUserDraggingRef.current = true;
+          });
+
+          // Debounced live update as the user is dragging the map
+          const onDragging = () => {
+            if (!isUserDraggingRef.current || isMapMovingProgrammaticallyRef.current) return;
+            if (debounceTimerRef.current) {
+              clearTimeout(debounceTimerRef.current);
+            }
+            debounceTimerRef.current = setTimeout(() => {
+              updateAddressFromMapCenter();
+            }, 180); // ultra-responsive live 180ms debounced updates
+          };
+
+          map.on('dragging', onDragging);
+          map.on('mapmove', onDragging);
+          
+          map.on('dragend', () => {
+            isUserDraggingRef.current = false;
+            if (debounceTimerRef.current) {
+              clearTimeout(debounceTimerRef.current);
+            }
+            updateAddressFromMapCenter();
+          });
+        });
+      } catch (err) {
+        console.error('Failed to initialize Gaode AMap:', err);
+      }
+    };
+
+    if (!script) {
+      script = document.createElement('script');
+      script.id = scriptId;
+      script.src = 'https://webapi.amap.com/maps?v=2.0&key=4143e567d55bbc1855231f9637efd6b0';
+      script.async = true;
+      script.defer = true;
+      script.onload = () => {
+        initializeMap();
+      };
+      document.head.appendChild(script);
+    } else {
+      if ((window as any).AMap) {
+        initializeMap();
+      } else {
+        script.addEventListener('load', initializeMap);
+      }
+    }
+
+    return () => {
+      if (mapInstanceRef.current) {
+        try {
+          mapInstanceRef.current.destroy();
+        } catch (_) {}
+        mapInstanceRef.current = null;
+      }
+    };
+  }, []);
+
+  // Synchronize map center when manually editing startLocation text
+  useEffect(() => {
+    const AMap = (window as any).AMap;
+    const map = mapInstanceRef.current;
+    if (AMap && map && startLocation && !isEditingStart) {
+      AMap.plugin('AMap.Geocoder', () => {
+        const geocoder = new AMap.Geocoder({
+          city: registeredCity || '银川市'
+        });
+        geocoder.getLocation(startLocation, (status: string, result: any) => {
+          if (status === 'complete' && result.geocodes.length) {
+            const loc = result.geocodes[0].location;
+            const currentCenter = map.getCenter();
+            const dist = Math.sqrt(Math.pow(currentCenter.lng - loc.lng, 2) + Math.pow(currentCenter.lat - loc.lat, 2));
+            if (dist > 0.0008) { // update center if offset exists to make it snug
+              map.setCenter([loc.lng, loc.lat]);
+            }
+          }
+        });
+      });
+    }
+  }, [isEditingStart, startLocation]);
+
+  // AMap Driving Route planning for distance calculation and map display
+  const [routeDistance, setRouteDistance] = useState<number | null>(null);
+  const drivingInstanceRef = useRef<any>(null);
+
+  useEffect(() => {
+    const AMap = (window as any).AMap;
+    const map = mapInstanceRef.current;
+    if (!AMap || !map || !mapLoaded) return;
+
+    if (!startLocation || !destination) {
+      if (drivingInstanceRef.current) {
+        try {
+          drivingInstanceRef.current.clear();
+        } catch (_) {}
+      }
+      setRouteDistance(null);
+      return;
+    }
+
+    const delayDebounce = setTimeout(() => {
+      AMap.plugin('AMap.Driving', () => {
+        try {
+          if (!drivingInstanceRef.current) {
+            drivingInstanceRef.current = new AMap.Driving({
+              map: map,
+              hideMarkers: false,
+              autoFitView: true,
+              city: registeredCity || '银川市'
+            });
+          } else {
+            try {
+              drivingInstanceRef.current.clear();
+            } catch (_) {}
+          }
+
+          isMapMovingProgrammaticallyRef.current = true;
+          drivingInstanceRef.current.search(
+            [
+              { keyword: startLocation, city: registeredCity || '银川市' },
+              { keyword: destination, city: registeredCity || '银川市' }
+            ],
+            (status: string, result: any) => {
+              // Delay the flag reset to ensure all fitView animations/movement finished completely
+              setTimeout(() => {
+                isMapMovingProgrammaticallyRef.current = false;
+              }, 1500);
+
+              if (status === 'complete' && result.routes && result.routes[0]) {
+                const distanceMeters = result.routes[0].distance;
+                const distanceKm = Number((distanceMeters / 1000).toFixed(2));
+                setRouteDistance(distanceKm);
+              } else {
+                console.warn('AMap.Driving status:', status, result);
+                setRouteDistance(null);
+              }
+            }
+          );
+        } catch (e) {
+          console.warn('Initializing or using AMap.Driving failed:', e);
+        }
+      });
+    }, 400);
+
+    return () => clearTimeout(delayDebounce);
+  }, [startLocation, destination, mapLoaded, registeredCity]);
+
+  // Clean up driving instance on unmount
+  useEffect(() => {
+    return () => {
+      if (drivingInstanceRef.current) {
+        try {
+          drivingInstanceRef.current.clear();
+        } catch (_) {}
+        drivingInstanceRef.current = null;
+      }
+    };
+  }, []);
 
   // QR Code creation modal states
   const [showQrModal, setShowQrModal] = useState(false);
@@ -158,7 +522,20 @@ export default function CreateOrderView({
     return () => unsubscribe();
   }, [userPhone]);
 
-  const passengerScanUrl = `https://daijiajifei.ccwu.cc/?driver=${encodeURIComponent(userPhone || '18609518888')}`;
+  // Synchronous Firestore persist for passenger scan access so they get the driver's latest active location
+  useEffect(() => {
+    const driverPhoneNum = userPhone || '18609518888';
+    const docRef = doc(db, 'passenger_links', driverPhoneNum);
+    
+    setDoc(docRef, {
+      driverPhone: driverPhoneNum,
+      driverStartLocation: startLocation,
+      updatedAt: Date.now()
+    }, { merge: true }).catch(err => console.error('Error persisting driver start location in passenger_links:', err));
+  }, [startLocation, userPhone]);
+
+
+  const passengerScanUrl = `https://daijiajifei.ccwu.cc/?driver=${encodeURIComponent(userPhone || '18609518888')}&name=${encodeURIComponent(settings?.customAppName?.trim() || 'XX代驾')}&startLocation=${encodeURIComponent(startLocation || '')}`;
 
   const formatCountdown = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -197,12 +574,61 @@ export default function CreateOrderView({
     }
   };
 
-  // Get active starting price from current billing rules (default to first slot or 40)
-  const baseStartingPrice = billingRules.slots[0]?.startingPrice ?? 40;
+  // Find active time slot for the current time
+  const getActiveTimeSlot = () => {
+    const nowObj = new Date();
+    const activeHour = nowObj.getHours();
+    let activeSlot = billingRules.slots[0];
+    
+    for (const slot of billingRules.slots) {
+      if (!slot.startTime || !slot.endTime) continue;
+      const [startH] = slot.startTime.split(':').map(Number);
+      const [endH] = slot.endTime.split(':').map(Number);
+      
+      if (startH > endH) { // overnight slot
+        if (activeHour >= startH || activeHour <= endH) {
+          activeSlot = slot;
+          break;
+        }
+      } else {
+        if (activeHour >= startH && activeHour <= endH) {
+          activeSlot = slot;
+          break;
+        }
+      }
+    }
+    return activeSlot;
+  };
+
+  const activeSlot = getActiveTimeSlot();
+  const baseStartingPrice = activeSlot.startingPrice ?? 40;
   
-  // Calculate estimation fee
+  // Calculate estimation fee: show starting price as minimum even if destination is empty
   const isEstimated = destination.trim().length > 0;
-  const estimatedPrice = isEstimated ? (baseStartingPrice * weatherMultiplier) : 0;
+  
+  // Calculate distance cost and return fee if we have a routeDistance
+  let estimatedPriceSubtotal = baseStartingPrice;
+  const freeKm = activeSlot.includedDistance ?? 7;
+  const interval = activeSlot.distanceInterval || 1;
+  const increase = activeSlot.priceIncrease ?? activeSlot.unitPricePerKm ?? 5;
+
+  if (routeDistance !== null) {
+    let distanceCost = 0;
+    if (routeDistance > freeKm) {
+      distanceCost = (routeDistance - freeKm) * (increase / interval);
+    }
+    
+    let returnFee = 0;
+    if (billingRules.returnFeeStartKm > 0 && routeDistance > billingRules.returnFeeStartKm) {
+      const rInterval = billingRules.returnFeeIntervalKm || 1;
+      const rIncrease = billingRules.returnFeeIncreaseYuan ?? billingRules.returnFeePerKm ?? 0;
+      returnFee = (routeDistance - billingRules.returnFeeStartKm) * (rIncrease / rInterval);
+    }
+    
+    estimatedPriceSubtotal = baseStartingPrice + distanceCost + returnFee;
+  }
+
+  const estimatedPrice = Number((estimatedPriceSubtotal * weatherMultiplier).toFixed(2));
 
   const handleCreateOrder = () => {
     if (settings && settings.isBanned) {
@@ -214,10 +640,11 @@ export default function CreateOrderView({
     const targetDestination = destination.trim() || '待指定安全目的地';
     const targetPhone = phoneNumber.trim() || '13900000000';
     const startingFeeApplied = Number((baseStartingPrice * weatherMultiplier).toFixed(2));
+    const finalEstimatedBaseFee = routeDistance !== null ? Number((estimatedPriceSubtotal * weatherMultiplier).toFixed(2)) : startingFeeApplied;
     
+    // Non-blocking warning instead of blocking order creation so checking order creation always works seamlessly.
     if (registeredCity && !startLocation.includes(registeredCity)) {
-      alert(`⚠️ 无法接单！因合规原因，您线上认证的听单开通城市为【${registeredCity}】。线上派单或自助接单，您的出发地（当前输入：${startLocation}）都必须在【${registeredCity}】范围内，否则无法接单！`);
-      return;
+      console.warn(`出发地（当前输入：${startLocation}）不在线上认证的听单开通城市（${registeredCity}）范围内。但因属于线下自助报单，已放行创建订单。`);
     }
     
     const newTrip: TripState = {
@@ -228,14 +655,14 @@ export default function CreateOrderView({
       startLocation: startLocation,
       endLocation: targetDestination,
       startTimestamp: Date.now(),
-      currentDistance: 0.0, // starts at 0 for recording distance
+      currentDistance: routeDistance ?? 0.0,
       currentWaitingTime: 0,
       currentStatus: 'serving',
       extraBridgeFee: 0,
       extraParkingFee: 0,
       extraOtherFee: 0,
-      calculatedBaseFee: startingFeeApplied,
-      calculatedTotalFee: startingFeeApplied,
+      calculatedBaseFee: finalEstimatedBaseFee,
+      calculatedTotalFee: estimatedPrice,
       weatherMultiplier: weatherMultiplier
     };
 
@@ -245,43 +672,29 @@ export default function CreateOrderView({
   return (
     <div className="relative flex-grow flex flex-col justify-between w-full h-full select-none overflow-hidden text-gray-900 bg-gray-100 font-sans">
       
-      {/* BEGIN: MapBackground (Beautiful Offline Vector Map SVG) */}
+      {/* BEGIN: MapBackground (Real Dynamic Gaode AMap Integration) */}
       <div className="absolute inset-0 z-0 bg-[#e4eae4] overflow-hidden">
-        <svg className="absolute inset-0 w-full h-full opacity-60" xmlns="http://www.w3.org/2000/svg">
-          {/* Roads/Grids representation */}
-          <path d="M-100,50 L500,50 M-100,200 L500,200 M-100,350 L500,350 M-100,500 L500,500" stroke="#fcfcfc" strokeWidth="16" />
-          <path d="M50,-100 L50,600 M200,-100 L200,600 M350,-100 L350,600" stroke="#fcfcfc" strokeWidth="16" />
-          {/* Diagonals / Highways */}
-          <path d="M-100,-100 L500,500" stroke="#f0f5f0" strokeWidth="24" />
-          <path d="M500,-100 L-100,500" stroke="#e0ece0" strokeWidth="12" />
-          {/* Green zones/parks */}
-          <rect x="80" y="80" width="100" height="90" rx="12" fill="#d0ebd0" />
-          <rect x="230" y="230" width="90" height="100" rx="12" fill="#d0ebd0" />
-          {/* River */}
-          <path d="M-50,420 Q120,380 220,460 T480,430" fill="none" stroke="#add8e6" strokeWidth="24" strokeLinecap="round" />
-        </svg>
-        <div className="absolute inset-0 bg-gradient-to-b from-white/20 via-transparent to-white/30" />
+        {/* Real Gaode map target container */}
+        <div ref={mapContainerRef} className="w-full h-full z-0" />
         
-        {/* Animated GPS Pulsing Pin Indicator */}
-        <div className="absolute top-[35%] left-[45%] -translate-x-1/2 -translate-y-1/2 flex flex-col items-center">
-          <span className="relative flex h-8 w-8">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-8 w-8 bg-teal-500 border-2 border-white shadow-md items-center justify-center">
-              <span className="h-2.5 w-2.5 rounded-full bg-white"></span>
-            </span>
-          </span>
-          <div className="mt-1 px-2.5 py-1 bg-teal-600 text-white font-semibold text-[10px] rounded-lg shadow-md leading-none whitespace-nowrap">
-            当前位置
+        {/* Dynamic loading overlays/fallbacks before map initialization resolves */}
+        {!mapLoaded && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-50 z-10 space-y-3">
+            <div className="w-8 h-8 rounded-full border-3 border-teal-600 border-t-transparent animate-spin" />
+            <span className="text-xs text-teal-800 font-medium font-sans">高德地图初始化中...</span>
           </div>
-        </div>
+        )}
+
+        {/* Elegant overlay to match styling */}
+        <div className="absolute inset-0 bg-gradient-to-b from-white/10 via-transparent to-white/20 pointer-events-none z-5" />
       </div>
       {/* END: MapBackground */}
 
       {/* BEGIN: NavigationHeader (Floating top panel bar) */}
-      <header className="relative p-4 flex justify-between items-start z-10">
+      <header className="relative p-4 flex justify-between items-start z-10 pointer-events-none">
         <button 
           onClick={onNavigateBack}
-          className="bg-white rounded-full p-2.5 shadow-lg active:scale-90 transition-transform" 
+          className="bg-white rounded-full p-2.5 shadow-lg active:scale-90 transition-transform pointer-events-auto" 
           data-purpose="back-button"
         >
           <svg className="h-6 w-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -290,7 +703,7 @@ export default function CreateOrderView({
         </button>
         <div 
           onClick={() => setShowQrModal(true)}
-          className="bg-white px-4 py-2 rounded-full shadow-lg flex items-center gap-1.5 cursor-pointer active:scale-95 transition-transform border border-teal-500/10 hover:bg-teal-50/50" 
+          className="bg-white px-4 py-2 rounded-full shadow-lg flex items-center gap-1.5 cursor-pointer active:scale-95 transition-transform border border-teal-500/10 hover:bg-teal-50/50 pointer-events-auto" 
           data-purpose="qr-order-trigger"
         >
           <QrCode className="w-3.5 h-3.5 text-[#189F95]" />
@@ -300,11 +713,11 @@ export default function CreateOrderView({
       {/* END: NavigationHeader */}
 
       {/* BEGIN: MapMarkerSection */}
-      <main className="flex-grow relative z-10 flex flex-col justify-between">
+      <main className="flex-grow relative z-10 flex flex-col justify-between pointer-events-none">
         
-        {/* Center Map Marker (Static pin indicator in center) */}
-        <div className="absolute top-[45%] left-1/2 -translate-x-1/2 -translate-y-full flex flex-col items-center" data-purpose="pickup-location-marker">
-          <div className="bg-white px-3.5 py-1.5 rounded-lg shadow-xl border border-gray-100 mb-1 whitespace-nowrap flex items-center gap-1.5 animate-bounce">
+        {/* Center Map Marker (Static pin indicator in center - aligned to true map center) */}
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-full flex flex-col items-center pointer-events-none" data-purpose="pickup-location-marker">
+          <div className="bg-white px-3.5 py-1.5 rounded-lg shadow-xl border border-gray-100 mb-1 whitespace-nowrap flex items-center gap-1.5 animate-bounce pointer-events-auto">
             <span className="w-2 h-2 rounded-full bg-[#189F95]"></span>
             {isEditingStart ? (
               <input
@@ -313,12 +726,12 @@ export default function CreateOrderView({
                 onChange={(e) => setStartLocation(e.target.value)}
                 onBlur={() => setIsEditingStart(false)}
                 autoFocus
-                className="text-xs font-bold text-gray-800 bg-transparent border-b border-gray-300 focus:outline-hidden p-0 max-w-[140px]"
+                className="text-xs font-bold text-gray-800 bg-transparent border-b border-gray-300 focus:outline-hidden p-0 max-w-[140px] pointer-events-auto"
               />
             ) : (
               <span 
                 onClick={() => setIsEditingStart(true)}
-                className="text-xs font-black text-gray-800 cursor-pointer hover:underline"
+                className="text-xs font-black text-gray-800 cursor-pointer hover:underline pointer-events-auto"
               >
                 {startLocation}
               </span>
@@ -332,7 +745,7 @@ export default function CreateOrderView({
         <div className="flex-grow"></div>
 
         {/* Map Action Buttons (Floating above the bottom sheet) */}
-        <div className="w-full px-4 mb-4 flex justify-between items-end gap-2" data-purpose="map-tools">
+        <div className="w-full px-4 mb-4 flex justify-between items-end gap-2 pointer-events-auto" data-purpose="map-tools">
           <div className="flex gap-2">
             <button 
               onClick={() => alert(`当前代驾规则模板：${billingRules.templateName}`)}
@@ -415,15 +828,23 @@ export default function CreateOrderView({
           </div>
 
           {/* Destination Input Row */}
-          <div className="flex items-center gap-3 bg-gray-50 rounded-2xl px-4 py-2.5 border border-transparent focus-within:border-teal-500/30 focus-within:bg-white transition-all">
+          <div 
+            onClick={() => {
+              setSearchText(destination);
+              setShowDestinationSearch(true);
+            }}
+            className="flex items-center gap-3 bg-gray-50 hover:bg-white rounded-2xl px-4 py-2.5 border border-transparent hover:border-teal-500/20 active:scale-[0.99] transition-all cursor-pointer select-none"
+            id="destination-trigger"
+          >
             <div className="w-2.5 h-2.5 bg-rose-500 rounded-full shrink-0"></div>
-            <input 
-              type="text"
-              value={destination}
-              onChange={(e) => setDestination(e.target.value)}
-              className="bg-transparent border-none focus:ring-0 p-0 text-sm font-bold text-gray-800 flex-grow placeholder:text-gray-400 placeholder:font-normal focus:outline-hidden" 
-              placeholder="请填写目的地（选填）" 
-            />
+            <div className="flex-grow flex items-center justify-between overflow-hidden">
+              <span className={`text-sm tracking-wide truncate ${destination ? 'font-bold text-gray-800' : 'text-gray-400 font-normal font-sans'}`}>
+                {destination || "请填写目的地（选填）"}
+              </span>
+              <svg className="h-4 w-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path d="M9 5l7 7-7 7" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
+              </svg>
+            </div>
           </div>
 
           {/* Phone Number Input Row */}
@@ -452,8 +873,16 @@ export default function CreateOrderView({
                 {estimatedPrice.toFixed(2)}
               </span>
             </div>
-            <p className="text-gray-400 text-[10px] scale-95 origin-left mt-1 font-medium">
-              {isEstimated ? `(起步价包含 ${billingRules.slots[0]?.includedDistance ?? 7} 公里)` : '(选择终点后，可预估起步价)'}
+            <p className="text-gray-400 text-[10px] scale-95 origin-left mt-1 font-medium select-none">
+              {routeDistance !== null ? (
+                <span className="text-teal-600 font-bold">
+                  预估里程: {routeDistance.toFixed(2)}公里 (起步含{activeSlot.includedDistance}公里)
+                </span>
+              ) : isEstimated ? (
+                `正在规划最优路线并计算距离...`
+              ) : (
+                '(选择终点后，可预估起步价及路线费用)'
+              )}
             </p>
           </div>
           
@@ -649,6 +1078,163 @@ export default function CreateOrderView({
        )}
 
        {/* IN-APP REAL-TIME SIMULATION PANEL (Exposes Passenger view inside a Phone Frame for Mainland China Devs) */}
+      {/* BEGIN: Full-screen Destination Selection Overlay */}
+      {showDestinationSearch && (
+        <div 
+          className="absolute inset-0 bg-white z-[70] flex flex-col animate-in slide-in-from-bottom duration-300 pointer-events-auto"
+          id="destination-search-page"
+        >
+          {/* Header */}
+          <div className="bg-gray-700 border-b border-gray-600 px-4 py-7 flex items-center justify-between shrink-0">
+            <button 
+              onClick={() => setShowDestinationSearch(false)}
+              className="text-white hover:text-gray-200 p-1 rounded-full active:scale-95 transition-all cursor-pointer flex items-center gap-1"
+            >
+              <svg className="h-5 w-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path d="M15 19l-7-7 7-7" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5"></path>
+              </svg>
+              <span className="text-sm font-bold text-white">返回</span>
+            </button>
+            <h3 className="text-lg font-black text-white tracking-tight">输入目的地</h3>
+            
+            {/* "取消目的地" Button: Reset to default state and close */}
+            <button 
+              onClick={() => {
+                setDestination('');
+                setSearchText('');
+                setShowDestinationSearch(false);
+              }}
+              className="text-white bg-rose-600 hover:bg-rose-750 font-bold text-xs active:scale-95 transition-all cursor-pointer px-3.5 py-2 rounded-full border border-rose-500"
+            >
+              取消目的地
+            </button>
+          </div>
+
+          {/* Search Input bar */}
+          <div className="p-4 bg-gray-50 border-b border-gray-100 shrink-0">
+            <div className="relative flex items-center bg-white rounded-2xl border border-gray-200 focus-within:border-teal-500 focus-within:ring-2 focus-within:ring-teal-100 transition-all p-3 shadow-xs">
+              <div className="w-2.5 h-2.5 bg-rose-500 rounded-full shrink-0 mr-3"></div>
+              <input 
+                type="text"
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                placeholder="搜索目的地 / 输入具体地址"
+                className="bg-transparent border-none focus:outline-hidden p-0 text-sm font-bold text-gray-800 flex-grow placeholder:text-gray-400 placeholder:font-normal focus:ring-0"
+                autoFocus
+              />
+              {searchText && (
+                <button 
+                  onClick={() => setSearchText('')}
+                  className="p-1 rounded-full hover:bg-gray-150 text-gray-400 hover:text-gray-650"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path d="M6 18L18 6M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5"></path>
+                  </svg>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Content Area - suggestions vs defaults */}
+          <div className="flex-grow overflow-y-auto p-4 space-y-4">
+            {suggestions.length > 0 ? (
+              <div className="space-y-1">
+                <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">匹配搜索建议</p>
+                {suggestions.map((tip, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => {
+                      setSearchText(tip.name);
+                    }}
+                    className="w-full text-left p-3.5 hover:bg-teal-50/50 rounded-xl flex items-start gap-3 transition-colors border border-transparent hover:border-teal-500/10 cursor-pointer"
+                  >
+                    <div className="w-5 h-5 bg-teal-50 text-teal-600 rounded-full flex items-center justify-center shrink-0 mt-0.5">
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
+                        <path d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
+                      </svg>
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-gray-800 leading-snug">{tip.name}</h4>
+                      <p className="text-xs text-gray-400 mt-0.5">{tip.address || tip.district}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div>
+                {searchText.trim() ? (
+                  <div className="p-3 bg-teal-50/40 rounded-xl border border-teal-500/10 mb-4">
+                    <p className="text-xs text-teal-800 leading-relaxed font-semibold">
+                      找不到精准建议？
+                    </p>
+                    <p className="text-xs text-teal-600/70 leading-relaxed mt-0.5">
+                      您可直接点击下方【确认目的地】使用您手输的地址名称。
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div>
+                      <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">热门 / 推荐目的地</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {SUGGESTED_DESTINATIONS.map((name, idx) => (
+                          <button
+                            key={idx}
+                            onClick={() => setSearchText(name)}
+                            className="text-left px-3.5 py-2.5 bg-gray-50 hover:bg-teal-50/35 hover:border-teal-500/20 border border-transparent rounded-xl text-xs font-bold text-gray-700 transition-all cursor-pointer whitespace-nowrap overflow-hidden text-ellipsis mr-1 mb-1"
+                          >
+                            📍 {name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    
+                    {destination && (
+                      <div className="pt-2">
+                        <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">当前已设定</p>
+                        <div className="p-3 bg-gray-50 rounded-xl flex items-center justify-between">
+                          <span className="text-xs font-bold text-gray-850">{destination}</span>
+                          <button 
+                            onClick={() => {
+                              setDestination('');
+                              setSearchText('');
+                              setShowDestinationSearch(false);
+                            }}
+                            className="text-xs font-bold text-rose-500 hover:text-rose-700 bg-rose-50 px-2 py-1 rounded-lg"
+                          >
+                            清除
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Bottom Action Footer */}
+          <div className="p-4 border-t border-gray-100 bg-white shrink-0">
+            <button
+              onClick={() => {
+                if (searchText.trim()) {
+                  setDestination(searchText.trim());
+                } else {
+                  setDestination('');
+                }
+                setShowDestinationSearch(false);
+              }}
+              className="w-full py-4 bg-[#189F95] hover:bg-[#13827a] text-white rounded-2xl font-black text-sm active:scale-[0.98] transition-transform shadow-lg shadow-teal-500/10 cursor-pointer flex items-center justify-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3"></path>
+              </svg>
+              <span>确认目的地</span>
+            </button>
+          </div>
+        </div>
+      )}
+
        {showSimulatedScanner && (
          <div className="absolute inset-0 bg-[#07080b]/95 z-[60] flex flex-col items-center justify-center p-2 animate-in fade-in duration-300">
            <div className="w-full max-w-[360px] h-[92vh] bg-[#07080b] rounded-[32px] border-4 border-slate-800 shadow-2xl relative overflow-hidden flex flex-col">

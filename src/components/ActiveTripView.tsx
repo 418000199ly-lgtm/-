@@ -2,6 +2,16 @@ import React, { useState, useEffect, useRef } from 'react';
 import { MapPin, Navigation, ChevronRight, Clock, ShieldCheck, X, PlusCircle, MinusCircle, CheckCircle } from 'lucide-react';
 import { TripState, ChauffeurSettings, BillingRules, checkVipActive } from '../types';
 
+const SUGGESTED_DESTINATIONS = [
+  '银川火车站',
+  '建发大阅城',
+  '新华百货(鼓楼店)',
+  '金凤万达广场',
+  '悦海新天地购物广场',
+  '银川河东国际机场',
+  '阅海湾中央商务区',
+];
+
 interface ActiveTripViewProps {
   trip: TripState;
   settings: ChauffeurSettings;
@@ -19,7 +29,7 @@ export default function ActiveTripView({
 }: ActiveTripViewProps) {
   // 1. Durations states (driving duration & waiting duration)
   const [drivingSeconds, setDrivingSeconds] = useState(0);
-  const [waitingSeconds, setWaitingSeconds] = useState(0);
+  const [waitingSeconds, setWaitingSeconds] = useState(() => (trip.currentWaitingTime || 0) * 60);
   const [isWaiting, setIsWaiting] = useState(false);
 
   // Refs to avoid stale closures and infinite loop triggers in useEffect
@@ -45,6 +55,41 @@ export default function ActiveTripView({
   const [tempDest, setTempDest] = useState(trip.endLocation || '');
   const [showSystemToast, setShowSystemToast] = useState(false);
   const [toastText, setToastText] = useState('');
+
+  // Destination page and matching search suggest states
+  const [showDestinationSearch, setShowDestinationSearch] = useState(false);
+  const [searchText, setSearchText] = useState('');
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+
+  // Local state or AMap auto completion suggestion loader
+  useEffect(() => {
+    const AMap = (window as any).AMap;
+    if (!AMap || !searchText.trim()) {
+      setSuggestions([]);
+      return;
+    }
+    const delayDebounce = setTimeout(() => {
+      AMap.plugin('AMap.AutoComplete', () => {
+        try {
+          const auto = new AMap.AutoComplete({
+            city: settings.city || '银川市',
+            citylimit: true
+          });
+          auto.search(searchText, (status: string, result: any) => {
+            if (status === 'complete' && result.tips) {
+              setSuggestions(result.tips.filter((t: any) => t.id && t.name));
+            } else {
+              setSuggestions([]);
+            }
+          });
+        } catch (e) {
+          console.warn('AutoComplete plugin failed:', e);
+        }
+      });
+    }, 200);
+
+    return () => clearTimeout(delayDebounce);
+  }, [searchText, settings.city]);
 
   // Slider Drag states (Interactive Swiper simulation)
   const [sliderPos, setSliderPos] = useState(0);
@@ -112,7 +157,24 @@ export default function ActiveTripView({
   useEffect(() => {
     const interval = setInterval(() => {
       if (isWaiting) {
-        setWaitingSeconds(prev => prev + 1);
+        setWaitingSeconds(prev => {
+          const nextVal = prev + 1;
+          // Every 60 seconds of waiting timer ticks = 1 minute of billed waiting duration
+          if (nextVal > 0 && nextVal % 60 === 0) {
+            const newMins = Math.floor(nextVal / 60);
+            setTimeout(() => {
+              const currentTripValue = tripRef.current;
+              const cost = calculateCost(currentTripValue.currentDistance, newMins, billingRulesRef.current);
+              onUpdateTripRef.current({
+                ...currentTripValue,
+                currentWaitingTime: newMins,
+                calculatedBaseFee: cost.base,
+                calculatedTotalFee: cost.total
+              });
+            }, 0);
+          }
+          return nextVal;
+        });
       } else {
         setDrivingSeconds(prev => prev + 1);
       }
@@ -121,37 +183,10 @@ export default function ActiveTripView({
     return () => clearInterval(interval);
   }, [isWaiting]);
 
-  // Handle driving ticks
+  // Handle driving ticks (Simulated real-time driving mileage accumulation and fee increments are disabled as requested)
   useEffect(() => {
-    if (drivingSeconds > 0 && drivingSeconds % 4 === 0) {
-      const addedKm = 0.10;
-      const currentTripValue = tripRef.current;
-      const nextDist = Number((currentTripValue.currentDistance + addedKm).toFixed(2));
-      const cost = calculateCost(nextDist, currentTripValue.currentWaitingTime, billingRulesRef.current);
-      onUpdateTripRef.current({
-        ...currentTripValue,
-        currentDistance: nextDist,
-        calculatedBaseFee: cost.base,
-        calculatedTotalFee: cost.total
-      });
-    }
+    // Disabled to prevent automatic 0.1km / 0.5元 fee increments on timer
   }, [drivingSeconds]);
-
-  // Handle waiting ticks
-  useEffect(() => {
-    if (waitingSeconds > 0 && waitingSeconds % 10 === 0) {
-      const currentTripValue = tripRef.current;
-      const newMins = currentTripValue.currentWaitingTime + 1;
-      const cost = calculateCost(currentTripValue.currentDistance, newMins, billingRulesRef.current);
-      onUpdateTripRef.current({
-        ...currentTripValue,
-        currentWaitingTime: newMins,
-        calculatedBaseFee: cost.base,
-        calculatedTotalFee: cost.total
-      });
-      triggerToast(`等候计时增加：当前累计等候 ${newMins} 分钟`);
-    }
-  }, [waitingSeconds]);
 
   // Toast notifier helper
   const triggerToast = (text: string) => {
@@ -268,7 +303,7 @@ export default function ActiveTripView({
       calculatedBaseFee: cost.base,
       calculatedTotalFee: cost.total
     });
-    triggerToast(`微调里程：${amount > 0 ? '+' : ''}${amount}公里，费用自动重新核算`);
+    // Actual rectification logic executed, toast notification suppressed as per user request
   };
 
   // Adjust waiting time manually (deviation helper to adjust waiting duration)
@@ -281,13 +316,12 @@ export default function ActiveTripView({
       triggerToast('纠偏功能已设定为禁用，请进入设置页开启它');
       return;
     }
+    // Amount to adjust on the clock timer is exactly 1 minute = 60 seconds
     const amountSecs = amountMins * 60;
-    setWaitingSeconds(prev => {
-      const nextSec = prev + amountSecs;
-      return nextSec < 0 ? 0 : nextSec;
-    });
+    const nextSec = Math.max(0, waitingSeconds + amountSecs);
+    setWaitingSeconds(nextSec);
 
-    const nextWaitingTime = Math.max(0, trip.currentWaitingTime + amountMins);
+    const nextWaitingTime = Math.floor(nextSec / 60);
     const cost = calculateCost(trip.currentDistance, nextWaitingTime, billingRules);
     onUpdateTrip({
       ...trip,
@@ -317,15 +351,12 @@ export default function ActiveTripView({
 
     const addedKm = settings.deviationKm ?? 1.0;
     const addedWaitSec = settings.deviationWaitSec ?? 60;
-    const addedWaitMin = Math.round(addedWaitSec / 60) || 1;
 
-    setWaitingSeconds(prev => {
-      const nextSec = prev + addedWaitSec;
-      return nextSec < 0 ? 0 : nextSec;
-    });
+    const nextSec = Math.max(0, waitingSeconds + addedWaitSec);
+    setWaitingSeconds(nextSec);
 
     const nextDist = Math.max(0, Number((trip.currentDistance + addedKm).toFixed(2)));
-    const nextWaitingTime = Math.max(0, trip.currentWaitingTime + addedWaitMin);
+    const nextWaitingTime = Math.floor(nextSec / 60);
     const cost = calculateCost(nextDist, nextWaitingTime, billingRules);
 
     onUpdateTrip({
@@ -336,7 +367,7 @@ export default function ActiveTripView({
       calculatedTotalFee: cost.total
     });
 
-    triggerToast(`极速纠偏：里程 +${addedKm}km，时间 +${addedWaitMin}分钟，费用自动重算`);
+    // Actual rectification logic executed, toast notification suppressed as per user request
   };
 
   return (
@@ -373,8 +404,9 @@ export default function ActiveTripView({
         {/* BEGIN: DestinationCard */}
         <section 
           onClick={() => {
-            setTempDest(trip.endLocation || '');
-            setShowDestModal(true);
+            const currentDest = (!trip.endLocation || trip.endLocation === '待指定安全目的地' || trip.endLocation === '未完成安全目的地设定' || trip.endLocation === '请填写目的地（选填）') ? '' : trip.endLocation;
+            setSearchText(currentDest);
+            setShowDestinationSearch(true);
           }}
           className="bg-white rounded-xl p-4 shadow-xs border border-gray-100 flex items-center justify-between cursor-pointer hover:bg-slate-50 transition-colors" 
           data-purpose="destination-selector"
@@ -383,13 +415,13 @@ export default function ActiveTripView({
             <MapPin className="h-4.5 w-4.5 text-[#26a69a] shrink-0" />
             <div className="text-left overflow-hidden">
               <div className="text-gray-400 text-[10px] uppercase font-bold tracking-wider leading-none mb-0.5">目的地</div>
-              <span className="text-sm font-bold text-gray-800 truncate block">
-                {trip.endLocation && trip.endLocation !== '待指定安全目的地' ? trip.endLocation : '未设置目的地'}
+              <span className={`text-sm font-bold truncate block ${(!trip.endLocation || trip.endLocation === '待指定安全目的地' || trip.endLocation === '未完成安全目的地设定' || trip.endLocation === '请填写目的地（选填）') ? 'text-gray-400 font-medium' : 'text-gray-800'}`}>
+                {(!trip.endLocation || trip.endLocation === '待指定安全目的地' || trip.endLocation === '未完成安全目的地设定' || trip.endLocation === '请填写目的地（选填）') ? '请填写目的地（选填）' : trip.endLocation}
               </span>
             </div>
           </div>
           <div className="flex items-center text-gray-400 shrink-0 select-none">
-            {!trip.endLocation || trip.endLocation === '待指定安全目的地' ? (
+            {(!trip.endLocation || trip.endLocation === '待指定安全目的地' || trip.endLocation === '未完成安全目的地设定' || trip.endLocation === '请填写目的地（选填）') ? (
               <span className="text-xs text-slate-400 mr-1 font-medium">点击设置</span>
             ) : null}
             <ChevronRight className="h-4 w-4 text-slate-300" />
@@ -510,14 +542,8 @@ export default function ActiveTripView({
 
             {/* Centered Overlay Badge: Show current waiting metrics and status labels */}
             <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none select-none z-10 flex flex-col items-center justify-center min-w-[124px] ${!settings.deviationMitigation ? 'opacity-65' : ''}`}>
-              <div className="text-2xl font-black text-[#26a69a] font-mono leading-none mb-1 text-center">
+              <div className="text-2xl font-black text-[#26a69a] font-mono leading-none text-center">
                 {formatHms(waitingSeconds)}
-              </div>
-              <div className="text-[10px] text-gray-500 font-bold tracking-wider leading-none whitespace-nowrap uppercase">
-                等候累积计时
-              </div>
-              <div className="text-[9px] text-slate-400 font-medium mt-1 font-sans">
-                已记费: <span className="font-bold text-teal-600">{trip.currentWaitingTime}</span> 分钟
               </div>
             </div>
           </div>
@@ -531,7 +557,6 @@ export default function ActiveTripView({
             onClick={() => {
               const nextWaiting = !isWaiting;
               setIsWaiting(nextWaiting);
-              triggerToast(nextWaiting ? '已为您启动「车停等候」计时体系' : '结束等候，已重新切换为行驶录制阶段');
             }}
             className={`w-full py-3.5 font-bold rounded-xl shadow-xs transition-all active:scale-98 flex items-center justify-center gap-2 border text-sm ${
               isWaiting 
@@ -597,45 +622,145 @@ export default function ActiveTripView({
       </main>
       {/* END: MainContent */}
 
-      {/* EDITABLE DESTINATION CARD MODAL */}
-      {showDestModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="bg-white rounded-2xl w-full max-w-[310px] p-5 shadow-2xl border border-slate-100 flex flex-col text-left animate-in zoom-in-95 duration-150">
-            <div className="flex justify-between items-center mb-3">
-              <span className="text-sm font-black text-slate-800">设置行程目的地</span>
-              <button 
-                onClick={() => setShowDestModal(false)}
-                className="text-slate-400 hover:text-slate-600 p-1"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+      {/* BEGIN: Full-screen Destination Selection Overlay */}
+      {showDestinationSearch && (
+        <div 
+          className="absolute inset-0 bg-white z-[70] flex flex-col animate-in slide-in-from-bottom duration-300 pointer-events-auto"
+          id="active-destination-search-page"
+        >
+          {/* Header */}
+          <div className="bg-gray-700 border-b border-gray-600 px-4 py-7 flex items-center justify-between shrink-0">
+            <button 
+              onClick={() => setShowDestinationSearch(false)}
+              className="text-white hover:text-gray-200 p-1 rounded-full active:scale-95 transition-all cursor-pointer flex items-center gap-1"
+            >
+              <svg className="h-5 w-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path d="M15 19l-7-7 7-7" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5"></path>
+              </svg>
+              <span className="text-sm font-bold text-white">返回</span>
+            </button>
+            <h3 className="text-lg font-black text-white tracking-tight">修改行程目的地</h3>
             
-            <p className="text-[11px] text-slate-400 mb-4">我们将根据您输入的真实名称匹配费率，并在出账单时呈现给车主结算。</p>
-            
-            <input 
-              type="text"
-              value={tempDest}
-              onChange={(e) => setTempDest(e.target.value)}
-              className="px-3.5 py-2 text-sm text-slate-800 bg-slate-50 border border-slate-200 focus:border-teal-500 focus:ring-0 focus:outline-hidden rounded-xl mb-4"
-              placeholder="请输入真实的行驶终点"
-              autoFocus
-            />
+            {/* "取消目的地" Button: Reset to default state and close */}
+            <button 
+              onClick={() => {
+                onUpdateTrip({
+                  ...trip,
+                  endLocation: '请填写目的地（选填）'
+                });
+                setSearchText('');
+                setShowDestinationSearch(false);
+                triggerToast('已清除目的地');
+              }}
+              className="text-white bg-rose-600 hover:bg-rose-750 font-bold text-xs active:scale-95 transition-all cursor-pointer px-3.5 py-2 rounded-full border border-rose-500"
+            >
+              取消目的地
+            </button>
+          </div>
 
-            <div className="flex gap-2">
-              <button 
-                onClick={() => setShowDestModal(false)}
-                className="flex-1 py-2.5 border border-slate-200 text-slate-500 hover:bg-slate-50 rounded-xl text-xs font-semibold"
-              >
-                取消
-              </button>
-              <button 
-                onClick={handleSaveDestination}
-                className="flex-1 py-2.5 bg-[#26a69a] hover:bg-[#208a80] text-white rounded-xl text-xs font-bold"
-              >
-                确认修改
-              </button>
+          {/* Search Input bar */}
+          <div className="p-4 bg-gray-50 border-b border-gray-100 shrink-0">
+            <div className="relative flex items-center bg-white rounded-2xl border border-gray-200 focus-within:border-teal-500 focus-within:ring-2 focus-within:ring-teal-100 transition-all p-3 shadow-xs">
+              <div className="w-2.5 h-2.5 bg-[#26a69a] rounded-full shrink-0 mr-3"></div>
+              <input 
+                type="text"
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                placeholder="搜索终点 / 输入具体地址"
+                className="bg-transparent border-none focus:outline-hidden p-0 text-sm font-bold text-gray-800 flex-grow placeholder:text-gray-400 placeholder:font-normal focus:ring-0"
+                autoFocus
+              />
+              {searchText && (
+                <button 
+                  onClick={() => setSearchText('')}
+                  className="p-1 rounded-full hover:bg-gray-150 text-gray-400 hover:text-gray-650"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path d="M6 18L18 6M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5"></path>
+                  </svg>
+                </button>
+              )}
             </div>
+          </div>
+
+          {/* Content Area - suggestions vs defaults */}
+          <div className="flex-grow overflow-y-auto p-4 space-y-4">
+            {suggestions.length > 0 ? (
+              <div className="space-y-1">
+                <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">匹配搜索建议</p>
+                {suggestions.map((tip, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => {
+                      setSearchText(tip.name);
+                    }}
+                    className="w-full text-left p-3.5 hover:bg-teal-50/50 rounded-xl flex items-start gap-3 transition-colors border border-transparent hover:border-teal-500/10 cursor-pointer"
+                  >
+                    <div className="w-5 h-5 bg-teal-50 text-teal-600 rounded-full flex items-center justify-center shrink-0 mt-0.5">
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
+                        <path d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
+                      </svg>
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-gray-800 leading-snug">{tip.name}</h4>
+                      <p className="text-xs text-gray-400 mt-0.5">{tip.address || tip.district}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div>
+                {searchText.trim() ? (
+                  <div className="p-3 bg-teal-50/40 rounded-xl border border-teal-500/10 mb-4">
+                    <p className="text-xs text-teal-800 leading-relaxed font-semibold">
+                      找不到精准建议？
+                    </p>
+                    <p className="text-xs text-teal-600/70 leading-relaxed mt-0.5">
+                      您可直接点击下方【确认修改】使用您手输的终点名称。
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div>
+                      <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">常用目的地推荐</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {SUGGESTED_DESTINATIONS.map((name, idx) => (
+                          <button
+                            key={idx}
+                            onClick={() => setSearchText(name)}
+                            className="text-left px-3.5 py-2.5 bg-gray-50 hover:bg-teal-50/35 hover:border-teal-500/20 border border-transparent rounded-xl text-xs font-bold text-gray-700 transition-all cursor-pointer whitespace-nowrap overflow-hidden text-ellipsis mr-1 mb-1"
+                          >
+                            📍 {name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Bottom Action Footer */}
+          <div className="p-4 border-t border-gray-100 bg-white shrink-0">
+            <button
+              onClick={() => {
+                const finalDest = searchText.trim();
+                onUpdateTrip({
+                  ...trip,
+                  endLocation: finalDest || '请填写目的地（选填）'
+                });
+                setShowDestinationSearch(false);
+                triggerToast(finalDest ? '修改目的地成功！实时计费规则自动匹配。' : '已重置目的地为选填');
+              }}
+              className="w-full py-4 bg-[#26a69a] hover:bg-[#208a80] text-white rounded-2xl font-black text-sm active:scale-[0.98] transition-transform shadow-lg shadow-teal-500/10 cursor-pointer flex items-center justify-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3"></path>
+              </svg>
+              <span>确认修改</span>
+            </button>
           </div>
         </div>
       )}

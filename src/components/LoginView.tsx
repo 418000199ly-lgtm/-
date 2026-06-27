@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Smartphone, ShieldCheck, HelpCircle, Loader2, KeyRound, ExternalLink, MessageSquare, AlertCircle } from 'lucide-react';
+import { Smartphone, ShieldCheck, Loader2, KeyRound, MessageSquare, AlertCircle } from 'lucide-react';
 
 interface LoginViewProps {
   onLoginSuccess: (phoneNumber: string) => void;
@@ -27,7 +27,6 @@ export default function LoginView({ onLoginSuccess }: LoginViewProps) {
 
   // Handle Send SMS Click
   const handleGetSMSCode = () => {
-    // Basic phone number validation for Chinese standard format
     const phoneTrimmed = phone.trim();
     if (!phoneTrimmed) {
       setErrorMsg('请输入您的手机号码');
@@ -41,22 +40,17 @@ export default function LoginView({ onLoginSuccess }: LoginViewProps) {
     setErrorMsg('');
     setIsSending(true);
 
-    // Simulate network latency for SMS API call
+    // 经典极速模拟通道：延迟模拟
     setTimeout(() => {
-      // Generate a 4-digit verification code
       const code = String(Math.floor(1000 + Math.random() * 9000));
       setGeneratedCode(code);
       setTimer(60);
       setIsSending(false);
-      
-      // Simulate receiving an SMS push notification overlay inside the app frame
-      setSimulatedSMS(`【极速代驾】尊敬的司机您好，您的登录验证码为：${code}，打死也不要告诉别人哦！(本验证码5分钟内有效)`);
-      
-      // Auto-hide mock notification after 10 seconds
+      setSimulatedSMS(`【尊呼叫出行】您的验证码为：${code}。仅用作代驾司机端登录验证，请在5分钟内输入。`);
       setTimeout(() => {
          setSimulatedSMS(null);
-      }, 10000);
-    }, 1000);
+      }, 15000); // 留出足够多的时间给客户点击填入
+    }, 800);
   };
 
   // Handle Login Submit
@@ -75,39 +69,42 @@ export default function LoginView({ onLoginSuccess }: LoginViewProps) {
       return;
     }
 
+    setIsLoggingIn(true);
+
+    // 校验模拟验证码
     if (!generatedCode) {
       setErrorMsg('请先获取验证码');
+      setIsLoggingIn(false);
       return;
     }
 
     if (smsCode.trim() !== generatedCode) {
       setErrorMsg('❌ 验证码错误，请输入上面浮窗推送中的正确验证码！');
+      setIsLoggingIn(false);
       return;
     }
 
-    setIsLoggingIn(true);
-    // Latency simulation
     setTimeout(() => {
       setIsLoggingIn(false);
       onLoginSuccess(phoneTrimmed);
-    }, 1200);
+    }, 1000);
   };
 
   return (
-    <div className="w-full h-full bg-[#0a0b10] flex flex-col relative select-text overflow-hidden">
+    <div className="w-full h-full bg-[#0a0b10] flex flex-col relative select-text overflow-hidden" id="login-module">
       
       {/* Mock Phone System Bar Spacer */}
       <div className="h-6 bg-black shrink-0"></div>
 
       {/* Dynamic Simulated Message Push Notification Overlay */}
       {simulatedSMS && (
-        <div className="absolute top-8 left-3 right-3 z-50 bg-[#1e2230]/95 border border-amber-500/20 text-slate-100 p-3 rounded-2xl shadow-[0_12px_24px_rgba(0,0,0,0.5)] flex items-start gap-2.5 animate-in slide-in-from-top-4 duration-300">
+        <div id="sms-notification-overlay" className="absolute top-8 left-3 right-3 z-50 bg-[#1e2230]/95 border border-amber-500/20 text-slate-100 p-3 rounded-2xl shadow-[0_12px_24px_rgba(0,0,0,0.5)] flex items-start gap-2.5 animate-in slide-in-from-top-4 duration-300">
           <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400 shrink-0 mt-0.5">
             <MessageSquare className="w-4 h-4 fill-amber-500/10" />
           </div>
           <div className="flex-1 space-y-1 text-left">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] font-black text-amber-500 tracking-wide">收到新短信 (极速真机模拟)</span>
+              <span className="text-[10px] font-black text-amber-500 tracking-wide">收到新验证码短信 (真机模拟)</span>
               <span className="text-[9px] text-slate-500">刚刚</span>
             </div>
             <p className="text-[11px] leading-relaxed text-slate-300 select-all font-medium">
@@ -115,17 +112,19 @@ export default function LoginView({ onLoginSuccess }: LoginViewProps) {
             </p>
             <div className="pt-1.5 flex gap-1.5">
               <button 
+                id="autofill-sms-btn"
                 onClick={() => {
                   setSmsCode(generatedCode);
                   setSimulatedSMS(null);
                 }}
-                className="px-2 py-0.5 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded text-[9px] font-black tracking-wide leading-none transition-colors"
+                className="px-2 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-lg text-[10px] font-black tracking-wide leading-none transition-colors cursor-pointer"
               >
                 一键填入验证码
               </button>
               <button 
+                id="dismiss-sms-btn"
                 onClick={() => setSimulatedSMS(null)}
-                className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded text-[9px] font-bold leading-none transition-colors"
+                className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-lg text-[10px] font-bold leading-none transition-colors cursor-pointer"
               >
                 忽略
               </button>
@@ -172,6 +171,7 @@ export default function LoginView({ onLoginSuccess }: LoginViewProps) {
                 </div>
                 <input
                   type="tel"
+                  id="driver-auth-phone-field"
                   maxLength={11}
                   value={phone}
                   onChange={(e) => {
@@ -195,13 +195,14 @@ export default function LoginView({ onLoginSuccess }: LoginViewProps) {
                   <KeyRound className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-600" />
                   <input
                     type="text"
+                    id="driver-sms-code-input"
                     maxLength={6}
                     value={smsCode}
                     onChange={(e) => {
                       setSmsCode(e.target.value.trim());
                       setErrorMsg('');
                     }}
-                    placeholder="请输入收到的验证码"
+                    placeholder="格式为4位或6位数字"
                     className="w-full pl-10 pr-4 py-3 bg-[#0e1017] border border-slate-900 rounded-2xl text-xs font-black focus:outline-hidden focus:border-[#189F95] text-slate-200 placeholder:text-slate-600 font-mono tracking-widest text-center"
                   />
                 </div>
@@ -209,6 +210,7 @@ export default function LoginView({ onLoginSuccess }: LoginViewProps) {
                 {/* Send button with countdown */}
                 <button
                   type="button"
+                  id="sms-sender-trigger-btn"
                   onClick={handleGetSMSCode}
                   disabled={timer > 0 || isSending}
                   className="px-3.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-[#189F95] hover:text-[#22bcae] rounded-2xl text-xs font-black transition-colors min-w-[96px] shrink-0 border border-slate-800 flex items-center justify-center cursor-pointer"
@@ -228,7 +230,7 @@ export default function LoginView({ onLoginSuccess }: LoginViewProps) {
 
           {/* Feedback error line if any */}
           {errorMsg && (
-            <div className="py-2.5 px-3 bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] rounded-xl flex items-center gap-1.5 text-left font-bold animate-pulse">
+            <div id="login-error-toast" className="py-2.5 px-3 bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] rounded-xl flex items-center gap-1.5 text-left font-bold animate-pulse">
               <AlertCircle className="w-3.5 h-3.5 shrink-0" />
               <span>{errorMsg}</span>
             </div>
@@ -237,6 +239,7 @@ export default function LoginView({ onLoginSuccess }: LoginViewProps) {
           {/* Action button */}
           <button
             type="submit"
+            id="driver-login-trigger"
             disabled={isLoggingIn}
             className="w-full py-3 bg-gradient-to-r from-teal-500 to-emerald-500 hover:from-teal-600 hover:to-emerald-600 disabled:opacity-50 text-slate-950 font-black text-xs tracking-wider rounded-2xl shadow-lg flex items-center justify-center gap-1.5 hover:scale-102 transition-transform cursor-pointer mt-2"
           >
