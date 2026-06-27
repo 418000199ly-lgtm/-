@@ -356,13 +356,20 @@ export default function DispatchValetOrder({ onShowToast }: DispatchValetOrderPr
       }
     };
 
+    let script = document.getElementById('amap-js-api-v2') as HTMLScriptElement || document.querySelector('script[src*="webapi.amap.com"]');
+
     if (!(window as any).AMap) {
-      const script = document.createElement('script');
-      script.src = 'https://webapi.amap.com/maps?v=2.0&key=4143e567d55bbc1855231f9637efd6b0';
-      script.async = true;
-      script.defer = true;
-      script.onload = loadAMap;
-      document.head.appendChild(script);
+      if (!script) {
+        script = document.createElement('script');
+        script.id = 'amap-js-api-v2';
+        script.src = 'https://webapi.amap.com/maps?v=2.0&key=4143e567d55bbc1855231f9637efd6b0';
+        script.async = true;
+        script.defer = true;
+        script.onload = loadAMap;
+        document.head.appendChild(script);
+      } else {
+        script.addEventListener('load', loadAMap);
+      }
     } else {
       loadAMap();
     }
@@ -647,9 +654,10 @@ export default function DispatchValetOrder({ onShowToast }: DispatchValetOrderPr
         
         let returnCost = 0;
         const returnStart = onlineBillingRules.returnFeeStartKm ?? 15;
-        const returnPerKm = onlineBillingRules.returnFeePerKm ?? 2;
-        if (tripDist > returnStart) {
-          returnCost = Math.ceil(tripDist - returnStart) * returnPerKm;
+        const rInterval = onlineBillingRules.returnFeeIntervalKm || 1;
+        const rIncrease = onlineBillingRules.returnFeeIncreaseYuan ?? onlineBillingRules.returnFeePerKm ?? 2;
+        if (returnStart > 0 && tripDist > returnStart) {
+          returnCost = Math.ceil((tripDist - returnStart) / rInterval) * rIncrease;
         }
         
         return base + distanceCost + returnCost;

@@ -126,7 +126,7 @@ export default function ActiveTripView({
 
     let distanceCost = 0;
     if (dist > freeKm) {
-      distanceCost = (dist - freeKm) * (increase / interval);
+      distanceCost = Math.ceil((dist - freeKm) / interval) * increase;
     }
 
     // Return trip surcharge
@@ -134,7 +134,7 @@ export default function ActiveTripView({
     if (rules.returnFeeStartKm > 0 && dist > rules.returnFeeStartKm) {
       const rInterval = rules.returnFeeIntervalKm || 1;
       const rIncrease = rules.returnFeeIncreaseYuan ?? rules.returnFeePerKm ?? 0;
-      returnFee = (dist - rules.returnFeeStartKm) * (rIncrease / rInterval);
+      returnFee = Math.ceil((dist - rules.returnFeeStartKm) / rInterval) * rIncrease;
     }
 
     // Waiting surcharge
@@ -142,7 +142,7 @@ export default function ActiveTripView({
     if (waitMinutes > rules.freeWaitingTime) {
       const wInterval = rules.waitingIntervalMin || 1;
       const wIncrease = rules.waitingIncreaseYuan ?? rules.waitingChargePerMin ?? 0;
-      waitingFee = (waitMinutes - rules.freeWaitingTime) * (wIncrease / wInterval);
+      waitingFee = Math.ceil((waitMinutes - rules.freeWaitingTime) / wInterval) * wIncrease;
     }
 
     const wMultiplier = trip.weatherMultiplier || 1.0;

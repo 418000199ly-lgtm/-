@@ -165,7 +165,6 @@ export default function CreateOrderView({
     };
 
     const scriptId = 'amap-js-api-v2';
-    let script = document.getElementById(scriptId) as HTMLScriptElement;
 
     const initializeMap = () => {
       const AMap = (window as any).AMap;
@@ -186,7 +185,7 @@ export default function CreateOrderView({
         mapInstanceRef.current = map;
         setMapLoaded(true);
 
-        AMap.plugin(['AMap.Geocoder', 'AMap.Geolocation'], () => {
+        AMap.plugin(['AMap.Geocoder', 'AMap.Geolocation', 'AMap.Driving'], () => {
           const geocoder = new AMap.Geocoder({
             city: registeredCity || '银川市'
           });
@@ -195,7 +194,7 @@ export default function CreateOrderView({
             isMapMovingProgrammaticallyRef.current = true;
             geocoder.getLocation(startLocation, (locStatus: string, locResult: any) => {
               isMapMovingProgrammaticallyRef.current = false;
-              if (locStatus === 'complete' && locResult.geocodes.length) {
+              if (locStatus === 'complete' && locResult && locResult.geocodes && locResult.geocodes.length) {
                 const loc = locResult.geocodes[0].location;
                 map.setCenter([loc.lng, loc.lat]);
               } else {
@@ -217,10 +216,10 @@ export default function CreateOrderView({
           };
 
           try {
-            // Create Geolocation instance to auto-track user real coordinates and name
+            // Create Geolocation instance with low timeout and disabled high accuracy for instant iframe load
             const geolocation = new AMap.Geolocation({
-              enableHighAccuracy: true,
-              timeout: 8000,
+              enableHighAccuracy: false, // Turn off high-accuracy to avoid GPS timeout in iframe preview
+              timeout: 2000,             // Fast 2s timeout fallback
               zoomToAccuracy: true,
               buttonPosition: 'RB',
               needAddress: true // retrieve address info along with coordinates
@@ -330,6 +329,8 @@ export default function CreateOrderView({
       }
     };
 
+    let script = document.getElementById(scriptId) as HTMLScriptElement || document.querySelector('script[src*="webapi.amap.com"]');
+
     if (!script) {
       script = document.createElement('script');
       script.id = scriptId;
@@ -368,7 +369,7 @@ export default function CreateOrderView({
           city: registeredCity || '银川市'
         });
         geocoder.getLocation(startLocation, (status: string, result: any) => {
-          if (status === 'complete' && result.geocodes.length) {
+          if (status === 'complete' && result && result.geocodes && result.geocodes.length) {
             const loc = result.geocodes[0].location;
             const currentCenter = map.getCenter();
             const dist = Math.sqrt(Math.pow(currentCenter.lng - loc.lng, 2) + Math.pow(currentCenter.lat - loc.lat, 2));
@@ -442,7 +443,7 @@ export default function CreateOrderView({
           console.warn('Initializing or using AMap.Driving failed:', e);
         }
       });
-    }, 400);
+    }, 100);
 
     return () => clearTimeout(delayDebounce);
   }, [startLocation, destination, mapLoaded, registeredCity]);
@@ -615,14 +616,14 @@ export default function CreateOrderView({
   if (routeDistance !== null) {
     let distanceCost = 0;
     if (routeDistance > freeKm) {
-      distanceCost = (routeDistance - freeKm) * (increase / interval);
+      distanceCost = Math.ceil((routeDistance - freeKm) / interval) * increase;
     }
     
     let returnFee = 0;
     if (billingRules.returnFeeStartKm > 0 && routeDistance > billingRules.returnFeeStartKm) {
       const rInterval = billingRules.returnFeeIntervalKm || 1;
       const rIncrease = billingRules.returnFeeIncreaseYuan ?? billingRules.returnFeePerKm ?? 0;
-      returnFee = (routeDistance - billingRules.returnFeeStartKm) * (rIncrease / rInterval);
+      returnFee = Math.ceil((routeDistance - billingRules.returnFeeStartKm) / rInterval) * rIncrease;
     }
     
     estimatedPriceSubtotal = baseStartingPrice + distanceCost + returnFee;
@@ -1144,7 +1145,9 @@ export default function CreateOrderView({
                   <button
                     key={idx}
                     onClick={() => {
+                      setDestination(tip.name);
                       setSearchText(tip.name);
+                      setShowDestinationSearch(false);
                     }}
                     className="w-full text-left p-3.5 hover:bg-teal-50/50 rounded-xl flex items-start gap-3 transition-colors border border-transparent hover:border-teal-500/10 cursor-pointer"
                   >
@@ -1180,7 +1183,11 @@ export default function CreateOrderView({
                         {SUGGESTED_DESTINATIONS.map((name, idx) => (
                           <button
                             key={idx}
-                            onClick={() => setSearchText(name)}
+                            onClick={() => {
+                              setDestination(name);
+                              setSearchText(name);
+                              setShowDestinationSearch(false);
+                            }}
                             className="text-left px-3.5 py-2.5 bg-gray-50 hover:bg-teal-50/35 hover:border-teal-500/20 border border-transparent rounded-xl text-xs font-bold text-gray-700 transition-all cursor-pointer whitespace-nowrap overflow-hidden text-ellipsis mr-1 mb-1"
                           >
                             📍 {name}
