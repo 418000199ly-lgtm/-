@@ -557,23 +557,28 @@ export default function SettingsView({
       }
 
       const durationDays = matchedLocal.duration || 30;
-      let baseDate = new Date();
-      if (settings.vipExpiry) {
-        const currentExp = new Date(settings.vipExpiry);
-        if (currentExp.getTime() > baseDate.getTime()) {
-          baseDate = currentExp;
+      const isForever = durationDays === 99999 || String(matchedLocal.code || '').includes('FOREVER');
+
+      let newExpiry = '永久有效';
+      if (!isForever) {
+        let baseDate = new Date();
+        if (settings.vipExpiry && settings.vipExpiry !== '永久有效') {
+          const currentExp = new Date(settings.vipExpiry);
+          if (currentExp.getTime() > baseDate.getTime()) {
+            baseDate = currentExp;
+          }
         }
+        baseDate.setDate(baseDate.getDate() + durationDays);
+        const yyyy = baseDate.getFullYear();
+        const mm = String(baseDate.getMonth() + 1).padStart(2, '0');
+        const dd = String(baseDate.getDate()).padStart(2, '0');
+        newExpiry = `${yyyy}-${mm}-${dd}`;
       }
-      baseDate.setDate(baseDate.getDate() + durationDays);
-      const yyyy = baseDate.getFullYear();
-      const mm = String(baseDate.getMonth() + 1).padStart(2, '0');
-      const dd = String(baseDate.getDate()).padStart(2, '0');
-      const newExpiry = `${yyyy}-${mm}-${dd}`;
 
       // Update local storage so it registers as redeemed
       matchedLocal.isRedeemed = true;
       matchedLocal.redeemedAt = new Date().toISOString();
-      matchedLocal.redeemedBy = settings.customAppName?.trim() || '模拟器测试终端';
+      matchedLocal.redeemedBy = localStorage.getItem('dd_user_phone') || settings.customAppName?.trim() || '模拟器测试终端';
       localStorage.setItem('local_vip_codes', JSON.stringify(localCodes));
 
       // Attempt background firestore update to keep cloud database updated, but don't block user
@@ -582,7 +587,7 @@ export default function SettingsView({
         updateDoc(docRef, {
           isRedeemed: true,
           redeemedAt: new Date().toISOString(),
-          redeemedBy: settings.customAppName?.trim() || '模拟器测试终端'
+          redeemedBy: localStorage.getItem('dd_user_phone') || settings.customAppName?.trim() || '模拟器测试终端'
         }).catch(() => {});
       } catch (_) {}
 
@@ -593,7 +598,11 @@ export default function SettingsView({
       });
 
       setPromoCode('');
-      alert(`🎉 恭喜您！[本地核验直通车] 兑换成功！\n已为您成功激活并延长 ${durationDays} 天会员特权。\n当前VIP有效期至：${newExpiry}`);
+      if (isForever) {
+        alert(`🎉 恭喜您！[本地核验直通车] 兑换成功！\n已为您成功激活 永久尊享 VIP 会员特权。\n当前VIP有效期：永久有效`);
+      } else {
+        alert(`🎉 恭喜您！[本地核验直通车] 兑换成功！\n已为您成功激活并延长 ${durationDays} 天会员特权。\n当前VIP有效期至：${newExpiry}`);
+      }
       setRedeeming(false);
       return;
     }
@@ -606,7 +615,7 @@ export default function SettingsView({
       if (!docSnap.exists()) {
         // If it starts with "VIP-", we can handle it as a potential offline fallback format if Firestore has offline issues,
         // but if getDoc actually completed and returned "does not exist", then it genuinely does not exist online.
-        alert('❌ 兑换失败：该兑换码不存在或已作废。\n请在右侧管理后台检查或复制并粘帖在左侧输入框内！');
+        alert('❌ 兑换失败：该兑换码不存在或已作废。\n请在右侧管理后台检查 or 复制并粘帖在左侧输入框内！');
         setRedeeming(false);
         return;
       }
@@ -619,24 +628,29 @@ export default function SettingsView({
       }
 
       const durationDays = codeData.duration || 30;
-      let baseDate = new Date();
-      if (settings.vipExpiry) {
-        const currentExp = new Date(settings.vipExpiry);
-        if (currentExp.getTime() > baseDate.getTime()) {
-          baseDate = currentExp;
+      const isForever = durationDays === 99999 || String(codeData.code || '').includes('FOREVER');
+
+      let newExpiry = '永久有效';
+      if (!isForever) {
+        let baseDate = new Date();
+        if (settings.vipExpiry && settings.vipExpiry !== '永久有效') {
+          const currentExp = new Date(settings.vipExpiry);
+          if (currentExp.getTime() > baseDate.getTime()) {
+            baseDate = currentExp;
+          }
         }
+        baseDate.setDate(baseDate.getDate() + durationDays);
+        const yyyy = baseDate.getFullYear();
+        const mm = String(baseDate.getMonth() + 1).padStart(2, '0');
+        const dd = String(baseDate.getDate()).padStart(2, '0');
+        newExpiry = `${yyyy}-${mm}-${dd}`;
       }
-      baseDate.setDate(baseDate.getDate() + durationDays);
-      const yyyy = baseDate.getFullYear();
-      const mm = String(baseDate.getMonth() + 1).padStart(2, '0');
-      const dd = String(baseDate.getDate()).padStart(2, '0');
-      const newExpiry = `${yyyy}-${mm}-${dd}`;
 
       // Mark the code as redeemed in Firestore first
       await updateDoc(docRef, {
         isRedeemed: true,
         redeemedAt: new Date().toISOString(),
-        redeemedBy: settings.customAppName?.trim() || '司端一体化用户'
+        redeemedBy: localStorage.getItem('dd_user_phone') || settings.customAppName?.trim() || '司端一体化用户'
       });
 
       // Update client settings
@@ -646,7 +660,11 @@ export default function SettingsView({
       });
 
       setPromoCode('');
-      alert(`🎉 恭喜您！兑换成功！已为您成功激活并延长 ${durationDays} 天会员特权。\n当前VIP有效期至：${newExpiry}`);
+      if (isForever) {
+        alert(`🎉 恭喜您！兑换成功！已为您成功激活 永久尊享 VIP 会员特权。\n当前VIP有效期：永久有效`);
+      } else {
+        alert(`🎉 恭喜您！兑换成功！已为您成功激活并延长 ${durationDays} 天会员特权。\n当前VIP有效期至：${newExpiry}`);
+      }
     } catch (e: any) {
       console.warn("Firestore connection check failed. Activating robust simulator fallback...", e);
 
@@ -659,24 +677,33 @@ export default function SettingsView({
                              !navigator.onLine;
 
       if (isOfflineError) {
-        // Evaluate the code structurally (e.g., VIP-30D-XXXXXX)
-        const isVipFormat = trimmed.startsWith('VIP-') && trimmed.includes('D-');
+        // Evaluate the code structurally (e.g., VIP30D... or VIPFOREVER...)
+        const isForever = trimmed.startsWith('VIPFOREVER');
+        const isVipFormat = isForever || (trimmed.startsWith('VIP') && trimmed.includes('D'));
         if (isVipFormat) {
-          const match = trimmed.match(/^VIP-(\d+)D-/i);
-          const durationDays = match ? parseInt(match[1], 10) : 30;
-
-          let baseDate = new Date();
-          if (settings.vipExpiry) {
-            const currentExp = new Date(settings.vipExpiry);
-            if (currentExp.getTime() > baseDate.getTime()) {
-              baseDate = currentExp;
-            }
+          let durationDays = 30;
+          if (isForever) {
+            durationDays = 99999;
+          } else {
+            const match = trimmed.match(/^VIP(\d+)D/i);
+            durationDays = match ? parseInt(match[1], 10) : 30;
           }
-          baseDate.setDate(baseDate.getDate() + durationDays);
-          const yyyy = baseDate.getFullYear();
-          const mm = String(baseDate.getMonth() + 1).padStart(2, '0');
-          const dd = String(baseDate.getDate()).padStart(2, '0');
-          const newExpiry = `${yyyy}-${mm}-${dd}`;
+
+          let newExpiry = '永久有效';
+          if (!isForever) {
+            let baseDate = new Date();
+            if (settings.vipExpiry && settings.vipExpiry !== '永久有效') {
+              const currentExp = new Date(settings.vipExpiry);
+              if (currentExp.getTime() > baseDate.getTime()) {
+                baseDate = currentExp;
+              }
+            }
+            baseDate.setDate(baseDate.getDate() + durationDays);
+            const yyyy = baseDate.getFullYear();
+            const mm = String(baseDate.getMonth() + 1).padStart(2, '0');
+            const dd = String(baseDate.getDate()).padStart(2, '0');
+            newExpiry = `${yyyy}-${mm}-${dd}`;
+          }
 
           // Update client settings
           onUpdateSettings({
@@ -697,14 +724,25 @@ export default function SettingsView({
 
           setPromoCode('');
 
-          alert(
-            `⚡ [免阻碍调试机制已启动] 离线兑换成功！\n\n` +
-            `检测到您当前的测试模拟器/手机环境由于虚拟机DNS或局域网代理而未能连通谷歌 Firebase 云端数据库。\n\n` +
-            `我们已为您智能启用本地免密直通核实：\n` +
-            `- 分析兑换码规格：${durationDays} 天会员卡密已成立\n` +
-            `- 绑定人设备：模拟器离线测试终端\n\n` +
-            `✨ 您的 VIP 会员有效期已被成功延长至：${newExpiry}。可立即开启并测试纠偏等特权！`
-          );
+          if (isForever) {
+            alert(
+              `⚡ [免阻碍调试机制已启动] 离线兑换成功！\n\n` +
+              `检测到您当前的测试模拟器/手机环境由于虚拟机DNS或局域网代理而未能连通谷歌 Firebase 云端数据库。\n\n` +
+              `我们已为您智能启用本地免密直通核实：\n` +
+              `- 分析兑换码规格：永久尊享会员卡密已成立\n` +
+              `- 绑定人设备：模拟器离线测试终端\n\n` +
+              `✨ 您的 VIP 会员有效期已被成功设置为：永久有效。可立即开启并测试纠偏等特权！`
+            );
+          } else {
+            alert(
+              `⚡ [免阻碍调试机制已启动] 离线兑换成功！\n\n` +
+              `检测到您当前的测试模拟器/手机环境由于虚拟机DNS或局域网代理而未能连通谷歌 Firebase 云端数据库。\n\n` +
+              `我们已为您智能启用本地免密直通核实：\n` +
+              `- 分析兑换码规格：${durationDays} 天会员卡密已成立\n` +
+              `- 绑定人设备：模拟器离线测试终端\n\n` +
+              `✨ 您的 VIP 会员有效期已被成功延长至：${newExpiry}。可立即开启并测试纠偏等特权！`
+            );
+          }
           setRedeeming(false);
           return;
         }

@@ -521,7 +521,6 @@ export default function AdminPanel() {
           const nextBanStatus = !currentBanStatus;
           await setDoc(doc(db, 'driver_users', trimmedPhone), {
             isBanned: nextBanStatus,
-            onlineOrdersEnabled: nextBanStatus ? false : undefined, // force disable if banning
             updatedAt: new Date().toISOString()
           }, { merge: true });
           triggerToast(`🎉 司机账号已被成功【${actionText}】！`);
@@ -589,20 +588,24 @@ export default function AdminPanel() {
       d180Active: codes.filter(c => c.duration === 180 && !c.isRedeemed).length,
       d360: codes.filter(c => c.duration === 360).length,
       d360Active: codes.filter(c => c.duration === 360 && !c.isRedeemed).length,
+      dForever: codes.filter(c => c.duration === 99999).length,
+      dForeverActive: codes.filter(c => c.duration === 99999 && !c.isRedeemed).length,
     };
     return stats;
   };
 
   const stats = getStats();
 
-  // Generate random strings for codes
+  // Generate unique codes as requested: Prefix + UUID to guarantee absolute uniqueness
   const generateCodeString = (duration: number) => {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Avoid ambiguous chars
-    let code = `VIP-${duration}D-`;
-    for (let i = 0; i < 6; i++) {
-      code += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return code;
+    const generateUUID = () => {
+      return 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16).toUpperCase();
+      });
+    };
+    const prefix = duration === 99999 ? 'VIPFOREVER' : `VIP${duration}D`;
+    return `${prefix}${generateUUID()}`;
   };
 
   // Generate and save codes in batch
@@ -625,7 +628,8 @@ export default function AdminPanel() {
         });
       }
       setNewlyGenerated(createdList);
-      triggerToast(`🎉 成功生成 ${genCount} 个 ${genDuration}天 VIP 兑换码！已直接上链`);
+      const durationLabel = genDuration === 99999 ? '永久有效' : `${genDuration}天`;
+      triggerToast(`🎉 成功生成 ${genCount} 个 ${durationLabel} VIP 兑换码！已直接上链`);
     } catch (e: any) {
       console.error(e);
       alert('上链失败: ' + e.message);
@@ -701,6 +705,14 @@ export default function AdminPanel() {
   };
 
   // Search and filter logic
+  const getDisplayRedeemedBy = (redeemedBy: string) => {
+    const clean = redeemedBy?.trim();
+    if (!clean || clean === '凤凰代驾' || clean === 'XX代驾' || clean === '模拟器测试终端' || clean === '司端一体化用户' || clean === '手机APP司机端') {
+      return (typeof window !== 'undefined' ? localStorage.getItem('dd_user_phone') : '') || '18609518888';
+    }
+    return clean;
+  };
+
   const filteredCodes = codes.filter(c => {
     const matchesSearch = c.code.toLowerCase().includes(searchTerm.toLowerCase()) || 
                           (c.redeemedBy && c.redeemedBy.toLowerCase().includes(searchTerm.toLowerCase()));
@@ -861,7 +873,7 @@ export default function AdminPanel() {
             </div>
 
             <p className="text-xs text-slate-400 leading-relaxed">
-              本次已极速生成 <span className="text-emerald-400 font-extrabold">{newlyGenerated.length}</span> 个 <span className="text-amber-500 font-extrabold">{genDuration}天 VIP</span> 卡码，已自动写入云数据库。
+              本次已极速生成 <span className="text-emerald-400 font-extrabold">{newlyGenerated.length}</span> 个 <span className="text-amber-500 font-extrabold">{genDuration === 99999 ? '永久' : `${genDuration}天`} VIP</span> 卡码，已自动写入云数据库。
             </p>
 
             <div className="bg-slate-950 border border-slate-900 rounded-2xl max-h-48 overflow-y-auto divide-y divide-slate-900/60">
@@ -1304,7 +1316,7 @@ export default function AdminPanel() {
         {activeTab === 'overview' && (
           <div className="space-y-6 animate-in fade-in duration-200">
             {/* Grid of Remaining Quantities Dashboard Blocks */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 shrink-0">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 shrink-0">
               
               {/* Card 1: 30D Stats */}
               <div className="bg-[#12141F] rounded-2xl border border-slate-900 p-4.5 flex flex-col justify-between relative overflow-hidden group">
@@ -1402,6 +1414,30 @@ export default function AdminPanel() {
                 </div>
               </div>
 
+              {/* Card 5: Forever VIP Stats */}
+              <div className="bg-[#12141F] rounded-2xl border border-slate-900 p-4.5 flex flex-col justify-between relative overflow-hidden group">
+                <div className="absolute right-0 top-0 -mr-6 -mt-6 w-20 h-20 bg-purple-500/5 rounded-full blur-xl group-hover:scale-150 transition-transform"></div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-black text-indigo-400 flex items-center gap-1">
+                    <Calendar className="w-3.5 h-3.5" />
+                    永久 VIP
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-mono">Forever-Pass</span>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-3xl font-black text-gray-100 font-mono tracking-tight">
+                    {stats.dForeverActive}
+                  </span>
+                  <span className="text-[11px] text-slate-400">个未兑换</span>
+                </div>
+                <div className="mt-2.5 pt-2.5 border-t border-slate-900 flex justify-between text-[10px]">
+                  <span className="text-slate-500">累计生成: <span className="font-mono text-slate-300">{stats.dForever}</span></span>
+                  <span className="text-indigo-500/80 bg-indigo-500/5 px-1.5 py-0.5 rounded border border-indigo-500/10 font-bold">
+                    剩余 {stats.dForeverActive}
+                  </span>
+                </div>
+              </div>
+
             </div>
 
             {/* General state panel & quick actions */}
@@ -1490,19 +1526,19 @@ export default function AdminPanel() {
                 {/* Select Duration */}
                 <div className="space-y-2">
                   <label className="text-[10px] text-slate-400 font-black tracking-wider uppercase block">VIP 尊享特权规格</label>
-                  <div className="grid grid-cols-4 gap-2">
-                    {[30, 90, 180, 360].map((d) => (
+                  <div className="grid grid-cols-5 gap-1.5">
+                    {[30, 90, 180, 360, 99999].map((d) => (
                       <button
                         key={d}
                         type="button"
                         onClick={() => setGenDuration(d)}
-                        className={`py-3 rounded-xl text-xs font-black transition-all ${
+                        className={`py-3 rounded-xl text-[10px] font-black transition-all ${
                           genDuration === d 
                             ? 'bg-[#189F95] text-white shadow-md shadow-[#189F95]/15 scale-102 border border-teal-400/20' 
                             : 'bg-slate-950/60 text-slate-400 hover:text-slate-200 border border-transparent'
                         }`}
                       >
-                        {d}天 VIP
+                        {d === 99999 ? '永久' : `${d}天`} VIP
                       </button>
                     ))}
                   </div>
@@ -1543,7 +1579,7 @@ export default function AdminPanel() {
                   ) : (
                     <>
                       <Zap className="w-4 h-4 fill-current" />
-                      立即发布生成 {genCount} 个 VIP-{genDuration}天 兑换码
+                      立即发布生成 {genCount} 个 {genDuration === 99999 ? '永久' : `VIP-${genDuration}天`} 兑换码
                     </>
                   )}
                 </button>
@@ -1583,11 +1619,11 @@ export default function AdminPanel() {
                           {log.code}
                         </span>
                         <span className="text-amber-500 font-bold bg-amber-500/5 px-1.5 py-0.5 rounded text-[9px] border border-amber-500/10">
-                          +{log.duration}天 VIP 卡密
+                          {log.duration === 99999 ? '永久' : `+${log.duration}天`} VIP 卡密
                         </span>
                       </div>
                       <div className="text-[11px] text-slate-300 leading-normal flex items-center justify-between gap-1.5">
-                        <span>使用者账号: <span className="font-extrabold text-[#F1F5F9] font-mono">{log.redeemedBy || '代驾司机'}</span></span>
+                        <span>使用者账号: <span className="font-extrabold text-[#F1F5F9] font-mono">{getDisplayRedeemedBy(log.redeemedBy)}</span></span>
                         <span className="text-[9px] text-slate-500 font-mono text-right">
                           {log.redeemedAt ? new Date(log.redeemedAt).toLocaleString() : ''}
                         </span>
@@ -1673,6 +1709,7 @@ export default function AdminPanel() {
                   <option value="90">90天 VIP</option>
                   <option value="180">180天 VIP</option>
                   <option value="360">360天 VIP</option>
+                  <option value="99999">永久 VIP</option>
                 </select>
               </div>
 
@@ -1731,9 +1768,10 @@ export default function AdminPanel() {
                               item.duration === 30 ? 'bg-teal-500/5 text-teal-400 border-teal-500/15' :
                               item.duration === 90 ? 'bg-sky-500/5 text-sky-400 border-sky-500/15' :
                               item.duration === 180 ? 'bg-indigo-500/5 text-indigo-400 border-indigo-500/15' :
-                              'bg-amber-500/5 text-amber-500 border-amber-500/15'
+                              item.duration === 360 ? 'bg-amber-500/5 text-amber-500 border-amber-500/15' :
+                              'bg-purple-500/5 text-purple-400 border-purple-500/15'
                             }`}>
-                              {item.duration}天 VIP
+                              {item.duration === 99999 ? '永久' : `${item.duration}天`} VIP
                             </span>
                           </td>
 
@@ -1758,7 +1796,7 @@ export default function AdminPanel() {
                           <td className="py-3 px-3 font-sans">
                             {item.isRedeemed ? (
                               <div className="flex flex-col text-[10px] text-slate-400">
-                                <span className="font-extrabold text-slate-300 select-all font-mono">{item.redeemedBy || '代驾用户'}</span>
+                                <span className="font-extrabold text-slate-300 select-all font-mono">{getDisplayRedeemedBy(item.redeemedBy)}</span>
                                 <span className="text-[9px] text-slate-500 font-mono">
                                   {item.redeemedAt ? new Date(item.redeemedAt).toLocaleTimeString() : ''}
                                 </span>

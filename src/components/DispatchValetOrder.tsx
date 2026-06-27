@@ -221,7 +221,7 @@ export default function DispatchValetOrder({ onShowToast }: DispatchValetOrderPr
         if (data.onlineOrdersEnabled && !data.isBanned) {
           list.push({
             phone: d.id,
-            name: data.customAppName || '特约代驾司机',
+            name: data.driverName || data.customAppName || '特约代驾司机',
             lat: data.lat || (passengerCoords.lat + (Math.random() - 0.5) * 0.04),
             lng: data.lng || (passengerCoords.lng + (Math.random() - 0.5) * 0.04),
             drivingYears: data.drivingYears || 6,

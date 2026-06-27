@@ -157,8 +157,63 @@ export default function CreateOrderView({
   const isMapMovingProgrammaticallyRef = useRef<boolean>(false);
   const isUserDraggingRef = useRef<boolean>(false);
   const debounceTimerRef = useRef<any>(null);
+  const prefetchedCoordsRef = useRef<{ lng: number; lat: number } | null>(null);
+  const prefetchedGeocodedRef = useRef<boolean>(false);
 
   useEffect(() => {
+    // 0. Start high-accuracy native geolocation pre-fetching in parallel immediately on page open
+    if (typeof window !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const rawLat = position.coords.latitude;
+          const rawLng = position.coords.longitude;
+          prefetchedCoordsRef.current = { lng: rawLng, lat: rawLat };
+          console.log('⚡ Prefetched native GPS coordinates:', rawLng, rawLat);
+
+          const AMap = (window as any).AMap;
+          const map = mapInstanceRef.current;
+          // If map and AMap are already fully loaded, immediately update center & reverse-geocode
+          if (map && AMap && !prefetchedGeocodedRef.current) {
+            prefetchedGeocodedRef.current = true;
+            AMap.convertFrom([rawLng, rawLat], 'gps', (status: string, result: any) => {
+              const finalLng = (status === 'complete' && result.locations) ? result.locations[0].lng : rawLng;
+              const finalLat = (status === 'complete' && result.locations) ? result.locations[0].lat : rawLat;
+              
+              isMapMovingProgrammaticallyRef.current = true;
+              map.setCenter([finalLng, finalLat]);
+              
+              AMap.plugin('AMap.Geocoder', () => {
+                const geocoder = new AMap.Geocoder({
+                  city: registeredCity || '银川市'
+                });
+                geocoder.getAddress([finalLng, finalLat], (geoStatus: string, geoResult: any) => {
+                  isMapMovingProgrammaticallyRef.current = false;
+                  if (geoStatus === 'complete' && geoResult.regeocode) {
+                    const formattedAddress = geoResult.regeocode.formattedAddress;
+                    const addressComp = geoResult.regeocode.addressComponent || {};
+                    let cleanLabel = formattedAddress;
+                    if (addressComp.province) cleanLabel = cleanLabel.replace(addressComp.province, '');
+                    if (addressComp.city) cleanLabel = cleanLabel.replace(addressComp.city, '');
+                    if (addressComp.district) cleanLabel = cleanLabel.replace(addressComp.district, '');
+                    if (!cleanLabel.trim()) cleanLabel = formattedAddress;
+                    setStartLocation(cleanLabel);
+                  }
+                });
+              });
+            });
+          }
+        },
+        (err) => {
+          console.warn('⚡ Native geolocation pre-fetch skipped or timed out:', err);
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 2500,     // fast 2.5 seconds timeout
+          maximumAge: 120000 // use cached position up to 2 minutes old for ultra-instant lookup!
+        }
+      );
+    }
+
     // 1. Configure the Gaode Security Key
     (window as any)._AMapSecurityConfig = {
       securityJsCode: '0aa3912e6a88fe59f9e5f0275524feba'
@@ -215,14 +270,53 @@ export default function CreateOrderView({
             });
           };
 
+          // Try using our fast pre-fetched native coordinates first
+          const tryUsePrefetched = () => {
+            if (prefetchedCoordsRef.current && !prefetchedGeocodedRef.current) {
+              prefetchedGeocodedRef.current = true;
+              const { lng, lat } = prefetchedCoordsRef.current;
+              console.log('⚡ Speeding up using pre-fetched native GPS coordinates:', lng, lat);
+              
+              AMap.convertFrom([lng, lat], 'gps', (convertStatus: string, convertResult: any) => {
+                const finalLng = (convertStatus === 'complete' && convertResult.locations) ? convertResult.locations[0].lng : lng;
+                const finalLat = (convertStatus === 'complete' && convertResult.locations) ? convertResult.locations[0].lat : lat;
+                
+                isMapMovingProgrammaticallyRef.current = true;
+                const coords = [finalLng, finalLat];
+                map.setCenter(coords);
+                
+                geocoder.getAddress(coords, (geoStatus: string, geoResult: any) => {
+                  isMapMovingProgrammaticallyRef.current = false;
+                  if (geoStatus === 'complete' && geoResult.regeocode) {
+                    const formattedAddress = geoResult.regeocode.formattedAddress;
+                    const addressComp = geoResult.regeocode.addressComponent || {};
+                    let cleanLabel = formattedAddress;
+                    if (addressComp.province) cleanLabel = cleanLabel.replace(addressComp.province, '');
+                    if (addressComp.city) cleanLabel = cleanLabel.replace(addressComp.city, '');
+                    if (addressComp.district) cleanLabel = cleanLabel.replace(addressComp.district, '');
+                    if (!cleanLabel.trim()) cleanLabel = formattedAddress;
+                    
+                    setStartLocation(cleanLabel);
+                  }
+                });
+              });
+              return true;
+            }
+            return false;
+          };
+
+          if (tryUsePrefetched()) {
+            return;
+          }
+
           try {
-            // Create Geolocation instance with low timeout and disabled high accuracy for instant iframe load
+            // Create Geolocation instance with high accuracy enabled for real mobile GPS tracking but with short timeout fallback
             const geolocation = new AMap.Geolocation({
-              enableHighAccuracy: false, // Turn off high-accuracy to avoid GPS timeout in iframe preview
-              timeout: 2000,             // Fast 2s timeout fallback
+              enableHighAccuracy: true,  // enable real GPS for actual phone users
+              timeout: 3000,             // 3s timeout for fast response
               zoomToAccuracy: true,
               buttonPosition: 'RB',
-              needAddress: true // retrieve address info along with coordinates
+              needAddress: true
             });
 
             map.addControl(geolocation);
@@ -237,7 +331,6 @@ export default function CreateOrderView({
                 
                 if (result.formattedAddress) {
                   const formattedAddress = result.formattedAddress;
-                  // Parse address components safely
                   const addressComp = result.addressComponent || {};
                   let cleanLabel = formattedAddress;
                   if (addressComp.province) cleanLabel = cleanLabel.replace(addressComp.province, '');
@@ -266,13 +359,18 @@ export default function CreateOrderView({
                   });
                 }
               } else {
-                fallbackGeolocation();
+                // If the map has loaded but geolocation failed, let's try prefetch coords one last check, or fallback to IP city
+                if (!tryUsePrefetched()) {
+                  fallbackGeolocation();
+                }
               }
             });
           } catch (err) {
             console.warn('Geolocation was blocked or failed, using city fallback:', err);
             isMapMovingProgrammaticallyRef.current = false;
-            fallbackGeolocation();
+            if (!tryUsePrefetched()) {
+              fallbackGeolocation();
+            }
           }
 
           const updateAddressFromMapCenter = () => {
@@ -656,15 +754,16 @@ export default function CreateOrderView({
       startLocation: startLocation,
       endLocation: targetDestination,
       startTimestamp: Date.now(),
-      currentDistance: routeDistance ?? 0.0,
+      currentDistance: 0.0,
       currentWaitingTime: 0,
       currentStatus: 'serving',
       extraBridgeFee: 0,
       extraParkingFee: 0,
       extraOtherFee: 0,
-      calculatedBaseFee: finalEstimatedBaseFee,
-      calculatedTotalFee: estimatedPrice,
-      weatherMultiplier: weatherMultiplier
+      calculatedBaseFee: startingFeeApplied,
+      calculatedTotalFee: startingFeeApplied,
+      weatherMultiplier: weatherMultiplier,
+      orderType: scanSuccessMsg ? '二维码报单' : '报单'
     };
 
     onStartTrip(newTrip);

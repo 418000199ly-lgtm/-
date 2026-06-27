@@ -13,6 +13,8 @@ import {
   Play,
   X,
   ChevronRight,
+  ChevronLeft,
+  Calendar,
   Gift,
   Crown,
   Edit2,
@@ -27,7 +29,8 @@ import {
   CheckCircle2,
   Flame,
   Camera,
-  Clock
+  Clock,
+  Trash2
 } from 'lucide-react';
 import { ChauffeurSettings, DriverStats, TripState, BillingRules, checkVipActive } from '../types';
 import DriverIllustration from './DriverIllustration';
@@ -118,6 +121,98 @@ export default function HomeView({
   // City Selector Dialog search query
   const [searchCityQuery, setSearchCityQuery] = useState('');
   const [showCitySelector, setShowCitySelector] = useState(false);
+
+  // Driver Order History Center states
+  const [showOrderHistory, setShowOrderHistory] = useState(false);
+  const [driverOrders, setDriverOrders] = useState<any[]>(() => {
+    try {
+      const existing = localStorage.getItem('dd_driver_orders');
+      if (existing) {
+        return JSON.parse(existing);
+      }
+    } catch (e) {}
+    // Seed with mock orders from the requested design
+    const defaultOrders = [
+      {
+        id: 'mock1',
+        timeStr: '05-23 00:54',
+        amount: 30.65,
+        startLocation: '银川市兴庆区融媒体中心',
+        endLocation: '融创城·学院里1号楼',
+        type: '后台指派订单',
+        status: '已支付'
+      },
+      {
+        id: 'mock2',
+        timeStr: '05-23 00:08',
+        amount: 28.85,
+        startLocation: '中国建设银行(银川湖滨东街支行)',
+        endLocation: '银帝·云和家园-东北门',
+        type: '乘客下单',
+        status: '已支付'
+      },
+      {
+        id: 'mock3',
+        timeStr: '05-22 23:17',
+        amount: 27.25,
+        startLocation: '晨旭托管中心公园华府',
+        endLocation: '玺云台北区',
+        type: '报单',
+        status: '已支付'
+      }
+    ];
+    try {
+      localStorage.setItem('dd_driver_orders', JSON.stringify(defaultOrders));
+    } catch (e) {}
+    return defaultOrders;
+  });
+
+  // Sync order history whenever it is shown
+  useEffect(() => {
+    if (showOrderHistory) {
+      try {
+        const existing = localStorage.getItem('dd_driver_orders');
+        if (existing) {
+          setDriverOrders(JSON.parse(existing));
+        }
+      } catch (e) {}
+    }
+  }, [showOrderHistory]);
+
+  const [swipedOrderId, setSwipedOrderId] = useState<string | null>(null);
+  const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  const handleSwipeStart = (clientX: number, clientY: number) => {
+    swipeStartRef.current = { x: clientX, y: clientY };
+  };
+
+  const handleSwipeEnd = (clientX: number, clientY: number, orderId: string) => {
+    if (!swipeStartRef.current) return;
+    const deltaX = clientX - swipeStartRef.current.x;
+    const deltaY = clientY - swipeStartRef.current.y;
+
+    if (deltaX < -40 && Math.abs(deltaY) < 30) {
+      setSwipedOrderId(orderId);
+    } else if (deltaX > 40 && Math.abs(deltaY) < 30) {
+      if (swipedOrderId === orderId) {
+        setSwipedOrderId(null);
+      }
+    }
+    swipeStartRef.current = null;
+  };
+
+  const handleDeleteOrder = (orderId: string) => {
+    try {
+      const updated = driverOrders.filter(o => o.id !== orderId);
+      setDriverOrders(updated);
+      localStorage.setItem('dd_driver_orders', JSON.stringify(updated));
+      if (swipedOrderId === orderId) {
+        setSwipedOrderId(null);
+      }
+    } catch (e) {
+      console.error('Failed to delete order:', e);
+    }
+  };
 
   // Subscribe to `/online_applications/{userPhone}`
   useEffect(() => {
@@ -309,29 +404,66 @@ export default function HomeView({
     setSliderPos(0);
   };
 
-  // Support responsive slide simulation on mouse click for desktop previews
+  // Support desktop drag (mouse event)
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (currentTrip) return; // Cannot toggle while in trip
+    touchStartRef.current = e.clientX;
+    setIsSliding(true);
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const deltaX = moveEvent.clientX - touchStartRef.current;
+      if (sliderWidthRef.current) {
+        const maxSlide = sliderWidthRef.current.clientWidth - 56;
+        let newPos = Math.max(0, Math.min(deltaX, maxSlide));
+        setSliderPos(newPos);
+      }
+    };
+
+    const handleMouseUp = (upEvent: MouseEvent) => {
+      setIsSliding(false);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+
+      if (sliderWidthRef.current) {
+        const maxSlide = sliderWidthRef.current.clientWidth - 56;
+        const currentPos = upEvent.clientX - touchStartRef.current;
+        if (currentPos > maxSlide * 0.7) {
+          if (!isOnline) {
+            if (settings.isBanned) {
+              alert("⚠️ 无法上线！因账户违规，您的账号已被管理员封停。封停期间无法上线听单或接单！");
+              setSliderPos(0);
+              return;
+            }
+            const isVip = checkVipActive(settings.vipExpiry);
+            if (!isVip && stats.todayOrders >= 2) {
+              alert('🔒 提示：非VIP会员每日限制报单次数已用完（每天限额2次，明早6:00自动恢复，激活VIP解除限制）。');
+              setSliderPos(0);
+              return;
+            }
+          }
+          // Trigger Toggle Online
+          onToggleOnline(!isOnline);
+          // Play notification
+          if (typeof window !== 'undefined' && 'speechSynthesis' in window && settings.voiceBroadcast === '开单语音播报') {
+            try {
+              const text = !isOnline ? '您已上线，点击报单创建订单' : '您已下线，期待为您下一次服务';
+              const utter = new SpeechSynthesisUtterance(text);
+              utter.lang = 'zh-CN';
+              window.speechSynthesis.speak(utter);
+            } catch(e){}
+          }
+        }
+      }
+      setSliderPos(0);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
+  // Support responsive slide simulation guidance on click for desktop previews
   const handleSlideToggleClick = () => {
-    if (currentTrip) return;
-    if (!isOnline) {
-      if (settings.isBanned) {
-        alert("⚠️ 无法上线！因账户违规，您的账号已被管理员封停。封停期间无法上线听单或接单！");
-        return;
-      }
-      const isVip = checkVipActive(settings.vipExpiry);
-      if (!isVip && stats.todayOrders >= 2) {
-        alert('🔒 提示：非VIP会员每日限制报单次数已用完（每天限额2次，明早6:00自动恢复，激活VIP解除限制）。');
-        return;
-      }
-    }
-    onToggleOnline(!isOnline);
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window && settings.voiceBroadcast === '开单语音播报') {
-      try {
-        const text = !isOnline ? '您已上线，点击报单创建订单' : '您已下线，期待为您下一次服务';
-        const utter = new SpeechSynthesisUtterance(text);
-        utter.lang = 'zh-CN';
-        window.speechSynthesis.speak(utter);
-      } catch(e){}
-    }
+    // No-op to avoid unintended tap action and prevent showing any alert popups
   };
 
   // --- Online dispatch orders application helper methods ---
@@ -514,30 +646,34 @@ export default function HomeView({
       }
 
       const durationDays = codeData.duration || 30;
+      const isForever = durationDays === 99999 || String(codeData.code || '').includes('FOREVER');
 
-      // Calculate next expiry
-      let currentExpiryDate = new Date();
-      if (settings.vipExpiry && settings.vipExpiry !== '永久有效') {
-        const parsed = Date.parse(settings.vipExpiry);
-        if (!isNaN(parsed)) {
-          const prevDate = new Date(parsed);
-          if (prevDate.getTime() > currentExpiryDate.getTime()) {
-            currentExpiryDate = prevDate;
+      let finalExpiryStr = '永久有效';
+      if (!isForever) {
+        // Calculate next expiry
+        let currentExpiryDate = new Date();
+        if (settings.vipExpiry && settings.vipExpiry !== '永久有效') {
+          const parsed = Date.parse(settings.vipExpiry);
+          if (!isNaN(parsed)) {
+            const prevDate = new Date(parsed);
+            if (prevDate.getTime() > currentExpiryDate.getTime()) {
+              currentExpiryDate = prevDate;
+            }
           }
         }
-      }
 
-      currentExpiryDate.setDate(currentExpiryDate.getDate() + durationDays);
-      const yyyy = currentExpiryDate.getFullYear();
-      const mm = String(currentExpiryDate.getMonth() + 1).padStart(2, '0');
-      const dd = String(currentExpiryDate.getDate()).padStart(2, '0');
-      const finalExpiryStr = `${yyyy}-${mm}-${dd}`;
+        currentExpiryDate.setDate(currentExpiryDate.getDate() + durationDays);
+        const yyyy = currentExpiryDate.getFullYear();
+        const mm = String(currentExpiryDate.getMonth() + 1).padStart(2, '0');
+        const dd = String(currentExpiryDate.getDate()).padStart(2, '0');
+        finalExpiryStr = `${yyyy}-${mm}-${dd}`;
+      }
 
       // Update Firestore document to mark as redeemed
       await updateDoc(docRef, {
         isRedeemed: true,
         redeemedAt: new Date().toISOString(),
-        redeemedBy: settings.customAppName?.trim() || '手机APP司机端'
+        redeemedBy: localStorage.getItem('dd_user_phone') || settings.customAppName?.trim() || '手机APP司机端'
       });
 
       // Update settings locally
@@ -548,7 +684,9 @@ export default function HomeView({
 
       setModalMessage({
         type: 'success',
-        text: `🎉 云端兑换成功！您的软件尊享会员已成功续期 +${durationDays} 天！新有效期至：${finalExpiryStr}`
+        text: isForever
+          ? `🎉 云端兑换成功！您的软件尊享会员已成功激活 永久有效 特权！`
+          : `🎉 云端兑换成功！您的软件尊享会员已成功续期 +${durationDays} 天！新有效期至：${finalExpiryStr}`
       });
       setRedeemCode('');
     } catch (e: any) {
@@ -738,12 +876,19 @@ export default function HomeView({
             </div>
             <div className="text-[11px] text-gray-300 font-medium">今日收入</div>
           </div>
-          <div>
+          <button
+            onClick={() => setShowOrderHistory(true)}
+            className="flex flex-col items-center justify-center cursor-pointer hover:bg-white/10 active:scale-95 transition-all p-1 rounded-xl w-full"
+            id="menu-btn-order-history"
+          >
             <div className="text-3xl font-bold font-display tracking-tight text-teal-300 mb-1">
               {stats.myPoints}
             </div>
-            <div className="text-[11px] text-gray-300 font-medium">总成单量</div>
-          </div>
+            <div className="text-[11px] text-gray-300 font-medium flex items-center justify-center space-x-0.5">
+              <span>总成单量</span>
+              <span className="text-[9px] text-teal-400">▶</span>
+            </div>
+          </button>
         </div>
       </div>
 
@@ -929,9 +1074,13 @@ export default function HomeView({
             /* --- OFFLINE STATE (Cute Chauffeur mascot waving) --- */
             <div className="text-center flex flex-col items-center justify-center">
               <DriverIllustration size={160} className="mb-4" />
-              <h3 className="text-base font-semibold text-gray-800 mb-1">您当前处于离线休息中</h3>
+              <h3 className="text-base font-semibold text-gray-800 mb-1">
+                {settings.isBanned ? '您当前处于封禁状态' : '您当前处于离线休息中'}
+              </h3>
               <p className="text-xs text-gray-400 max-w-[240px] leading-relaxed">
-                温馨提示：只有上线状态才能使用报单功能
+                {settings.isBanned 
+                  ? '温馨提示：账号封禁状态无法上线，请联系管理！' 
+                  : '温馨提示：只有上线状态才能使用报单功能'}
               </p>
             </div>
           )}
@@ -963,7 +1112,7 @@ export default function HomeView({
           {/* Swipe guide text */}
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
             <span className="text-[12px] font-bold tracking-wider text-white drop-shadow-xs">
-              {isOnline ? '右滑或轻点下线停止报单' : '右滑或轻点上线开始报单'}
+              {isOnline ? '右滑下线停止报单' : '右滑上线开始报单'}
             </span>
           </div>
 
@@ -972,6 +1121,7 @@ export default function HomeView({
             onTouchStart={handleTouchStart}
             onTouchMove={handleTouchMove}
             onTouchEnd={handleTouchEnd}
+            onMouseDown={handleMouseDown}
             onClick={(e) => {
               e.stopPropagation(); // Avoid double click trigger
               handleSlideToggleClick();
@@ -2016,6 +2166,136 @@ export default function HomeView({
               我知道了
             </button>
           </div>
+        </div>
+      )}
+
+      {/* 10. Beautiful Full-screen Order Center Modal (订单中心) */}
+      {showOrderHistory && (
+        <div className="absolute inset-0 bg-slate-50 dark:bg-zinc-950 z-[110] flex flex-col overflow-hidden animate-in slide-in-from-bottom duration-300 select-none">
+          {/* Header */}
+          <header className="sticky top-0 z-10 bg-white dark:bg-zinc-900 border-b border-slate-200 dark:border-zinc-800 px-4 h-16 flex items-center justify-between shrink-0">
+            <button 
+              onClick={() => setShowOrderHistory(false)}
+              className="w-10 h-10 flex items-center justify-start text-slate-600 dark:text-slate-300 active:scale-95 transition-all"
+            >
+              <ChevronLeft className="w-6 h-6" />
+            </button>
+            <h1 className="text-base font-black text-slate-800 dark:text-slate-100">订单中心</h1>
+            <div className="w-10"></div> 
+          </header>
+
+          {/* Monthly / All counts Section */}
+          <section className="bg-white dark:bg-zinc-900 py-6 flex items-center border-b border-slate-100 dark:border-zinc-800 shrink-0">
+            <div className="flex-1 text-center border-r border-slate-100 dark:border-zinc-800">
+              <div className="font-extrabold text-slate-800 dark:text-white text-3xl font-display">
+                {stats.myPoints}
+              </div>
+              <div className="text-slate-400 dark:text-slate-500 mt-1 text-xs font-semibold">
+                当月接单
+              </div>
+            </div>
+            <div className="flex-1 text-center">
+              <div className="font-extrabold text-slate-800 dark:text-white text-3xl font-display">
+                {stats.myPoints}
+              </div>
+              <div className="text-slate-400 dark:text-slate-500 mt-1 text-xs font-semibold">
+                全部单数
+              </div>
+            </div>
+          </section>
+
+          {/* Month Indicator Bar */}
+          <div className="bg-slate-100/60 dark:bg-zinc-950 px-4 py-2.5 flex justify-between items-center text-slate-500 dark:text-slate-400 shrink-0">
+            <span className="text-sm font-bold font-mono">
+              {(() => {
+                const now = new Date();
+                return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+              })()}
+            </span>
+            <button className="flex items-center space-x-1 text-xs font-bold text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors">
+              <Calendar className="w-4 h-4" />
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Main Orders List (Scrollable) */}
+          <main className="flex-1 overflow-y-auto pb-6 space-y-3 p-4">
+            {driverOrders.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center space-y-3">
+                <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-zinc-900 flex items-center justify-center text-slate-400">
+                  <ClipboardList className="w-6 h-6" />
+                </div>
+                <p className="text-xs text-slate-400 font-bold">暂无历史接单记录</p>
+              </div>
+            ) : (
+              driverOrders.map((order, idx) => (
+                <div 
+                  key={order.id || idx} 
+                  className="relative overflow-hidden rounded-2xl bg-red-600 dark:bg-red-700/80"
+                >
+                  {/* Absolute Delete Button behind */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteOrder(order.id);
+                    }}
+                    className="absolute right-0 top-0 bottom-0 w-20 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white flex flex-col items-center justify-center space-y-1 transition-all z-0"
+                  >
+                    <Trash2 className="w-4.5 h-4.5 text-white animate-bounce duration-1000" />
+                    <span className="text-[10px] font-black tracking-wider text-white">删除</span>
+                  </button>
+
+                  {/* Swipable content wrapper */}
+                  <div 
+                    onTouchStart={(e) => handleSwipeStart(e.touches[0].clientX, e.touches[0].clientY)}
+                    onTouchEnd={(e) => handleSwipeEnd(e.changedTouches[0].clientX, e.changedTouches[0].clientY, order.id)}
+                    onMouseDown={(e) => handleSwipeStart(e.clientX, e.clientY)}
+                    onMouseUp={(e) => handleSwipeEnd(e.clientX, e.clientY, order.id)}
+                    style={{ transform: swipedOrderId === order.id ? 'translateX(-80px)' : 'translateX(0px)' }}
+                    className="bg-white dark:bg-zinc-900 relative rounded-2xl border border-slate-100 dark:border-zinc-800 p-5 shadow-xs transition-transform duration-300 ease-out hover:border-teal-500/30 z-10 select-none cursor-grab active:cursor-grabbing"
+                  >
+                    {/* Timeline path line (green to orange vertical line) */}
+                    <div className="absolute left-[25px] top-[74px] bottom-[74px] w-[1px] bg-slate-100 dark:bg-zinc-800 z-0 pointer-events-none"></div>
+
+                    {/* Header info */}
+                    <div className="flex justify-between items-center mb-3.5 pb-2.5 border-b border-slate-50 dark:border-zinc-800/50 pointer-events-none">
+                      <div className="flex items-center text-slate-400 dark:text-slate-500 text-xs font-semibold">
+                        <Clock className="w-3.5 h-3.5 mr-1.5" />
+                        <span>{order.timeStr}</span>
+                      </div>
+                      <div className="flex items-center text-xs font-extrabold text-slate-500 dark:text-slate-400">
+                        <span>¥{Number(order.amount).toFixed(2)} 已支付</span>
+                        <ChevronRight className="w-3.5 h-3.5 text-slate-300 ml-0.5" />
+                      </div>
+                    </div>
+
+                    {/* Locations */}
+                    <div className="space-y-4 mb-4 relative z-10 pointer-events-none">
+                      <div className="flex items-start">
+                        <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 mt-1 mr-3.5 flex-shrink-0 shadow-sm shadow-emerald-400/50"></div>
+                        <span className="font-bold text-slate-700 dark:text-slate-200 text-xs leading-normal">
+                          {order.startLocation}
+                        </span>
+                      </div>
+                      <div className="flex items-start">
+                        <div className="w-2.5 h-2.5 rounded-full bg-orange-400 mt-1 mr-3.5 flex-shrink-0 shadow-sm shadow-orange-400/50"></div>
+                        <span className="font-bold text-slate-700 dark:text-slate-200 text-xs leading-normal">
+                          {order.endLocation}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Tags */}
+                    <div className="flex items-center justify-between pointer-events-none">
+                      <span className="inline-block px-2.5 py-0.5 border border-slate-200 dark:border-zinc-700/80 rounded-md text-[10px] font-extrabold text-slate-500 dark:text-slate-400 bg-slate-50/50 dark:bg-zinc-900/50">
+                        {order.type === '企业单' ? '报单' : (order.type === '特惠代驾' ? '乘客下单' : (order.type || '报单'))}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </main>
         </div>
       )}
 

@@ -217,6 +217,7 @@ export const IncomingOrderOverlay: React.FC<IncomingOrderOverlayProps> = ({
       calculatedBaseFee: approxPrice,
       calculatedTotalFee: approxPrice,
       isOnlineOrder: true,
+      orderType: order.isValetOrder ? '后台指派订单' : '乘客下单',
     };
     onAccept(trip);
   };

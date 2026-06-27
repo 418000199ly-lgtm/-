@@ -60,6 +60,7 @@ export interface TripState {
   calculatedTotalFee: number;
   weatherMultiplier?: number;
   isOnlineOrder?: boolean;
+  orderType?: '后台指派订单' | '报单' | '二维码报单' | '乘客下单';
 }
 
 export interface DriverStats {

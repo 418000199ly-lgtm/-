@@ -579,6 +579,33 @@ export default function App() {
   };
 
   const handleFinishTrip = (amount: number) => {
+    // Record to driver order history
+    if (currentTrip) {
+      try {
+        const existingStr = localStorage.getItem('dd_driver_orders');
+        const orders = existingStr ? JSON.parse(existingStr) : [];
+        const now = new Date();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const hours = String(now.getHours()).padStart(2, '0');
+        const minutes = String(now.getMinutes()).padStart(2, '0');
+        
+        const newOrder = {
+          id: currentTrip.id || Date.now().toString(),
+          timeStr: `${month}-${day} ${hours}:${minutes}`,
+          amount: amount,
+          startLocation: currentTrip.startLocation || '未定位起点',
+          endLocation: currentTrip.endLocation || '未定位终点',
+          type: currentTrip.orderType || (currentTrip.isOnlineOrder ? '乘客下单' : '报单'),
+          status: '已支付'
+        };
+        orders.unshift(newOrder);
+        localStorage.setItem('dd_driver_orders', JSON.stringify(orders));
+      } catch (e) {
+        console.error('Failed to save order to history:', e);
+      }
+    }
+
     // Add up stats securely
     const nextPoints = (stats.myPoints || 0) + 1;
     const updatedStats = {
