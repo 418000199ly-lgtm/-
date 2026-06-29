@@ -37,7 +37,8 @@ import {
   Smartphone,
   MessageSquare,
   Menu,
-  Edit3
+  Edit3,
+  Users
 } from 'lucide-react';
 import DispatchValetOrder from './DispatchValetOrder';
 import AdminBillingRules from './AdminBillingRules';
@@ -77,7 +78,17 @@ function calculateExpiryFromDays(days: string): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-export default function AdminPanel() {
+interface AdminPanelProps {
+  userPhone?: string | null;
+  userRole?: string;
+  userTeamCity?: string;
+}
+
+export default function AdminPanel({
+  userPhone = null,
+  userRole = '普通司机',
+  userTeamCity = ''
+}: AdminPanelProps = {}) {
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('isAdminAuthenticated') === 'true';
@@ -103,8 +114,23 @@ export default function AdminPanel() {
   const [newlyGenerated, setNewlyGenerated] = useState<string[]>([]);
 
   // Navigation tab
-  const [activeTab, setActiveTab] = useState<'overview' | 'generate' | 'codes' | 'drivers' | 'sms' | 'messages' | 'applications' | 'dispatch' | 'online_billing'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'generate' | 'codes' | 'drivers' | 'sms' | 'messages' | 'applications' | 'dispatch' | 'online_billing' | 'team'>('overview');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // Team member state variables
+  const [teamMembers, setTeamMembers] = useState<any[]>([]);
+  const [memberPhone, setMemberPhone] = useState('');
+  const [memberRole, setMemberRole] = useState('普通司机');
+  const [memberRemark, setMemberRemark] = useState('');
+  const [memberSearchQuery, setMemberSearchQuery] = useState('');
+  const [savingMember, setSavingMember] = useState(false);
+  const [chosenCity, setChosenCity] = useState('');
+
+  // Active user's team status based on real-time DB data or fallback props
+  const loggedInMember = teamMembers.find(m => m.phone === userPhone);
+  const activeRole = loggedInMember ? loggedInMember.role : (isAdminAuthenticated ? '开发者司机' : '普通司机');
+  const activeCity = loggedInMember ? loggedInMember.city : '';
+  const isAuth = isAdminAuthenticated || (userPhone && activeRole !== '普通司机');
 
   // Online Applications State Managers
   const [applications, setApplications] = useState<any[]>([]);
@@ -283,6 +309,37 @@ export default function AdminPanel() {
       setApplications(list);
     }, (error) => {
       console.error("Error subscribing to online applications:", error);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Subscribe to `/team_members` collection in real-time
+  useEffect(() => {
+    const q = collection(db, 'team_members');
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach((docSnap) => {
+        list.push({ id: docSnap.id, ...docSnap.data() });
+      });
+      // Sort by role hierarchy, then by createdAt or phone
+      const roleHierarchy: Record<string, number> = {
+        '开发者司机': 1,
+        '城市老板司机': 2,
+        '城市管理司机': 3,
+        '城市派单员司机': 4,
+        '普通司机': 5
+      };
+      list.sort((a, b) => {
+        const orderA = roleHierarchy[a.role] || 99;
+        const orderB = roleHierarchy[b.role] || 99;
+        if (orderA !== orderB) return orderA - orderB;
+        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return dateB - dateA;
+      });
+      setTeamMembers(list);
+    }, (error) => {
+      console.error("Error subscribing to team members:", error);
     });
     return () => unsubscribe();
   }, []);
@@ -574,6 +631,124 @@ export default function AdminPanel() {
     }
   };
 
+  const handleSaveTeamMember = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const phone = memberPhone.trim();
+    if (!phone || !/^1[3-9]\d{9}$/.test(phone)) {
+      alert('✍️ 提示：请输入中国大陆 11 位有效手机号码！');
+      return;
+    }
+
+    // 1. Role-based Permission Checking
+    if (activeRole === '城市派单员司机' || activeRole === '普通司机') {
+      alert('❌ 您当前无权限设置团队成员！');
+      return;
+    }
+
+    if (activeRole === '城市管理司机') {
+      if (memberRole !== '城市派单员司机') {
+        alert('❌ 城市管理司机只能设置【城市派单员司机】！');
+        return;
+      }
+    }
+
+    if (activeRole === '城市老板司机') {
+      if (memberRole === '开发者司机' || memberRole === '城市老板司机') {
+        alert('❌ 城市老板司机不能设置【开发者司机】或【城市老板司机】！');
+        return;
+      }
+    }
+
+    // 2. City logic
+    let targetCity = '';
+    if (memberRole !== '开发者司机') {
+      if (activeRole === '开发者司机') {
+        if (!chosenCity) {
+          alert('❌ 请选择所属服务城市！');
+          return;
+        }
+        targetCity = chosenCity;
+      } else {
+        targetCity = activeCity;
+        if (!targetCity) {
+          alert('❌ 您当前所属城市为空，无法设置城市所属司机！');
+          return;
+        }
+      }
+    }
+
+    setSavingMember(true);
+    try {
+      // 3. Unique Boss constraint check
+      if (memberRole === '城市老板司机') {
+        const existingBoss = teamMembers.find(m => m.role === '城市老板司机' && m.city === targetCity && m.phone !== phone);
+        if (existingBoss) {
+          alert(`❌ 提示：【${targetCity}】已存在城市老板司机（手机号：${existingBoss.phone}），每个城市只能设置一个城市老板司机！`);
+          setSavingMember(false);
+          return;
+        }
+      }
+
+      const docRef = doc(db, 'team_members', phone);
+      await setDoc(docRef, {
+        phone: phone,
+        role: memberRole,
+        city: targetCity,
+        remark: memberRemark.trim(),
+        createdAt: new Date().toISOString()
+      }, { merge: true });
+
+      triggerToast(`✓ 成功设置团队成员手机号 ${phone} 为【${memberRole}】（城市：${targetCity || '全国'}）！`);
+      setMemberPhone('');
+      setMemberRemark('');
+      setChosenCity('');
+    } catch (err: any) {
+      console.error("Error setting team member:", err);
+      alert("设置失败：" + err.message);
+    } finally {
+      setSavingMember(false);
+    }
+  };
+
+  const handleDeleteTeamMember = async (phone: string) => {
+    const targetMember = teamMembers.find(m => m.phone === phone);
+    if (!targetMember) return;
+
+    // Check permissions
+    if (activeRole === '城市派单员司机' || activeRole === '普通司机') {
+      alert('❌ 您无权删除团队成员！');
+      return;
+    }
+
+    if (activeRole === '城市管理司机') {
+      if (targetMember.role !== '城市派单员司机' || targetMember.city !== activeCity) {
+        alert('❌ 城市管理司机只能删除自己辖区内的【城市派单员司机】！');
+        return;
+      }
+    }
+
+    if (activeRole === '城市老板司机') {
+      const allowedRoles = ['城市管理司机', '城市派单员司机', '普通司机'];
+      if (!allowedRoles.includes(targetMember.role) || targetMember.city !== activeCity) {
+        alert('❌ 城市老板司机只能删除自己辖区内的【城市管理司机/城市派单员司机/普通司机】！');
+        return;
+      }
+    }
+
+    showConfirm(
+      '⚠️ 删除团队成员',
+      `确定要将成员(手机号: ${phone})从团队名单中移除吗？`,
+      async () => {
+        try {
+          await deleteDoc(doc(db, 'team_members', phone));
+          triggerToast(`✓ 已成功将团队成员 ${phone} 移除！`);
+        } catch (e: any) {
+          alert('移除失败: ' + e.message);
+        }
+      }
+    );
+  };
+
   // Helper to calculate statistics
   const getStats = () => {
     const stats = {
@@ -723,7 +898,7 @@ export default function AdminPanel() {
     return matchesSearch && matchesStatus && matchesDuration;
   });
 
-  if (!isAdminAuthenticated) {
+  if (!isAuth) {
     const handleAdminLogin = async (e: React.FormEvent) => {
       e.preventDefault();
       setLoginError('');
@@ -1120,6 +1295,24 @@ export default function AdminPanel() {
               Rules
             </span>
           </button>
+
+          {/* Tab Button 10: Team Member Settings */}
+          <button
+            onClick={() => setActiveTab('team')}
+            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-xs font-bold transition-all ${
+              activeTab === 'team'
+                ? 'bg-gradient-to-r from-teal-500/10 to-transparent border-l-2 border-teal-500 text-teal-400'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
+            }`}
+          >
+            <div className="flex items-center space-x-2.5">
+              <Users className="w-4 h-4 text-orange-400" />
+              <span>👥 团队成员设置</span>
+            </div>
+            <span className="text-[10px] font-mono font-bold bg-orange-500/10 text-orange-400 px-1.5 py-0.5 rounded-sm shrink-0">
+              Team
+            </span>
+          </button>
         </div>
 
         {/* Footer profile area */}
@@ -1237,6 +1430,15 @@ export default function AdminPanel() {
               <CheckCircle className="w-4 h-4 text-emerald-400" />
               <span>📋 线上单开通审批 ({applications.filter(a => a.status === 'pending').length} 待办)</span>
             </button>
+            <button
+              onClick={() => { setActiveTab('team'); setIsMobileMenuOpen(false); }}
+              className={`flex items-center space-x-2 text-left p-2.5 rounded-xl text-xs font-black ${
+                activeTab === 'team' ? 'bg-[#189F95]/10 text-teal-400' : 'text-slate-400'
+              }`}
+            >
+              <Users className="w-4 h-4 text-orange-400" />
+              <span>👥 团队成员设置 ({teamMembers.length})</span>
+            </button>
           </div>
         )}
       </div>
@@ -1258,6 +1460,7 @@ export default function AdminPanel() {
                 {activeTab === 'applications' && 'Driver Online Privileges Approval'}
                 {activeTab === 'dispatch' && 'Valet Dispatch Station'}
                 {activeTab === 'online_billing' && 'Online Order Billing Details'}
+                {activeTab === 'team' && 'Team Member Configurations'}
               </span>
               <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
               <span className="text-[10px] text-slate-500 font-mono">Live Sync Engine v3.5</span>
@@ -1272,17 +1475,19 @@ export default function AdminPanel() {
               {activeTab === 'applications' && '高级线上听单资格审批 - 国网稽核'}
               {activeTab === 'dispatch' && '高管代客派单调度系统 — AMap 2.0 联席总控'}
               {activeTab === 'online_billing' && '线上单价格计费规则配置 — 双系统隔离独立配置端'}
+              {activeTab === 'team' && '团队成员设置 - 核心管理与分级赋权'}
             </h1>
             <p className="text-xs text-slate-500">
               {activeTab === 'overview' && '决策概览数据自动汇总，直观掌控卡密发布流通与司机注册状态。'}
               {activeTab === 'generate' && '支持自拟时长批量配置，自动排重防破，直接写入Firestore存储区。'}
-              {activeTab === 'codes' && '可视化检索在链的VIP卡密数据，支持按规格和对换状态联合物理删除。'}
+              {activeTab === 'codes' && '可视化检索在链的VIP卡密数据，支持按规格 and 对换状态联合物理删除。'}
               {activeTab === 'drivers' && '手机号为唯一登入凭据。在这里手动改变司机剩余天数，移动端无感实时联动生效。'}
               {activeTab === 'sms' && '针对国内个人短信审核合规门槛高的痛点，提供低成本秒出验证码推荐集成备忘。'}
               {activeTab === 'messages' && '管理员在此发送指令、公告、特定客服或活动奖励通知等。支持按搜索到的特定司机号码进行点对点精准下发，也支持选择全体司机广播。'}
               {activeTab === 'applications' && '集中受审全省市高级司机上传登记的机动车执照与居民身份证。支持在线秒级签章、实时派发线上接单权限，有违规代驾记录可随时收回及标记作废。'}
               {activeTab === 'dispatch' && '集成高德 2D 平面大屏。支持滑动、搜索地址自绘盲区及 3 公里绝对直线距离最邻近搜寻派单，并实现对全国所有城市的一键线上听单挂锁总开关。'}
               {activeTab === 'online_billing' && '后台独立设置的线上派单计费逻辑，与司机端报单模板独立分流。修改此计费配置只会影响系统分配、后台派遣等所有线上单的最终账单，司机端无法改变。'}
+              {activeTab === 'team' && '输入手机号码手动将司机或管理员赋予不同团队阶梯，权限依次为：开发者司机 > 城市老板司机 > 城市管理司机 > 城市派单员司机 > 普通司机。'}
             </p>
           </div>
 
@@ -3126,6 +3331,209 @@ export default function AdminPanel() {
         {/* 9. ONLINE BILLING RULES TAB */}
         {activeTab === 'online_billing' && (
           <AdminBillingRules onShowToast={triggerToast} />
+        )}
+
+        {/* 10. TEAM MEMBER SETTINGS TAB */}
+        {activeTab === 'team' && (
+          <div className="space-y-6 animate-in fade-in duration-200">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              
+              {/* Add Team Member (left - 4 cols) */}
+              <div className="lg:col-span-4 bg-[#12141F] rounded-2xl border border-slate-900 p-5 space-y-4 flex flex-col">
+                <div className="flex items-center space-x-2 border-b border-indigo-950/20 pb-3">
+                  <div className="p-1.5 rounded-lg bg-orange-500/10 text-orange-400">
+                    <Users className="w-4 h-4" />
+                  </div>
+                  <h3 className="font-sans font-black text-sm text-slate-200">添加/设置团队成员</h3>
+                </div>
+
+                <form onSubmit={handleSaveTeamMember} className="space-y-4 flex-1">
+                  {/* Phone Input */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">手机号码 (中国大陆 11 位)</label>
+                    <div className="relative">
+                      <Smartphone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                      <input
+                        type="text"
+                        required
+                        placeholder="请输入团队成员手机号..."
+                        value={memberPhone}
+                        onChange={(e) => setMemberPhone(e.target.value)}
+                        className="w-full pl-9 pr-3 py-2.5 bg-slate-950 border border-slate-900 focus:border-orange-500 outline-hidden rounded-xl text-xs font-mono font-bold text-orange-400 transition-colors"
+                      />
+                    </div>
+                    {memberPhone && !/^1[3-9]\d{9}$/.test(memberPhone) && (
+                      <p className="text-[10px] text-rose-400">请输入正确的11位大陆手机号</p>
+                    )}
+                  </div>
+
+                  {/* Level dropdown */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">团队成员级别/等级</label>
+                    <select
+                      value={memberRole}
+                      onChange={(e) => setMemberRole(e.target.value)}
+                      className="w-full px-3 py-2.5 bg-slate-950 border border-slate-900 focus:border-orange-500 outline-hidden rounded-xl text-xs font-bold text-slate-200 cursor-pointer"
+                    >
+                      <option value="开发者司机">开发者司机 (最高权限)</option>
+                      <option value="城市老板司机">城市老板司机</option>
+                      <option value="城市管理司机">城市管理司机</option>
+                      <option value="城市派单员司机">城市派单员司机</option>
+                      <option value="普通司机">普通司机</option>
+                    </select>
+                  </div>
+
+                  {/* Remarks Input */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">姓名/职务备注 (可选)</label>
+                    <input
+                      type="text"
+                      placeholder="例如：张三、技术部总监..."
+                      value={memberRemark}
+                      onChange={(e) => setMemberRemark(e.target.value)}
+                      className="w-full px-3 py-2.5 bg-slate-950 border border-slate-900 focus:border-orange-500 outline-hidden rounded-xl text-xs font-bold text-slate-200"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={savingMember}
+                    className="w-full py-3 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-slate-950 text-xs font-black rounded-xl shadow-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    {savingMember ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <span>保存成员设定</span>
+                    )}
+                  </button>
+                </form>
+              </div>
+
+              {/* Team Member List (right - 8 cols) */}
+              <div className="lg:col-span-8 bg-[#12141F] rounded-2xl border border-slate-900 p-5 space-y-4 flex flex-col">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-indigo-950/20 pb-3 gap-3">
+                  <div className="flex items-center space-x-2">
+                    <div className="p-1.5 rounded-lg bg-orange-500/10 text-orange-400">
+                      <Users className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h3 className="font-sans font-black text-sm text-slate-200">团队成员在册一览</h3>
+                      <p className="text-[10px] text-slate-500">共 {teamMembers.length} 名团队成员</p>
+                    </div>
+                  </div>
+
+                  {/* Search Bar */}
+                  <div className="relative w-full sm:w-64">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
+                    <input
+                      type="text"
+                      placeholder="搜索手机号/姓名备注..."
+                      value={memberSearchQuery}
+                      onChange={(e) => setMemberSearchQuery(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2 bg-slate-950 border border-slate-900 focus:border-orange-500 outline-hidden rounded-xl text-xs font-bold text-slate-200 transition-colors"
+                    />
+                  </div>
+                </div>
+
+                {/* Table list */}
+                <div className="overflow-x-auto rounded-xl border border-slate-900/60 bg-slate-950/20">
+                  <table className="w-full border-collapse text-left text-xs text-slate-400">
+                    <thead>
+                      <tr className="border-b border-slate-900/80 bg-slate-950/60 font-black text-slate-300">
+                        <th className="px-4 py-3">手机号</th>
+                        <th className="px-4 py-3">团队等级</th>
+                        <th className="px-4 py-3">系统姓名 / 备注</th>
+                        <th className="px-4 py-3">加入时间</th>
+                        <th className="px-4 py-3 text-right">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-900/60">
+                      {teamMembers.filter(m => {
+                        const q = memberSearchQuery.toLowerCase().trim();
+                        if (!q) return true;
+                        const registered = allDrivers.find(d => d.phoneNumber === m.phone);
+                        const driverName = registered ? registered.driverName : '';
+                        return m.phone.includes(q) || 
+                               (m.remark && m.remark.toLowerCase().includes(q)) ||
+                               driverName.toLowerCase().includes(q);
+                      }).length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="text-center py-8 text-slate-600 font-bold">
+                            暂无符合检索条件的团队成员记录
+                          </td>
+                        </tr>
+                      ) : (
+                        teamMembers.filter(m => {
+                          const q = memberSearchQuery.toLowerCase().trim();
+                          if (!q) return true;
+                          const registered = allDrivers.find(d => d.phoneNumber === m.phone);
+                          const driverName = registered ? registered.driverName : '';
+                          return m.phone.includes(q) || 
+                                 (m.remark && m.remark.toLowerCase().includes(q)) ||
+                                 driverName.toLowerCase().includes(q);
+                        }).map((member) => {
+                          const registered = allDrivers.find(d => d.phoneNumber === member.phone);
+                          
+                          // Badges style based on roles
+                          const getRoleBadge = (role: string) => {
+                            switch (role) {
+                              case '开发者司机':
+                                return <span className="px-2 py-1 rounded bg-red-500/10 text-red-400 border border-red-500/15 font-black">开发者司机</span>;
+                              case '城市老板司机':
+                                return <span className="px-2 py-1 rounded bg-amber-500/10 text-amber-400 border border-amber-500/15 font-black">城市老板司机</span>;
+                              case '城市管理司机':
+                                return <span className="px-2 py-1 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/15 font-black">城市管理司机</span>;
+                              case '城市派单员司机':
+                                return <span className="px-2 py-1 rounded bg-teal-500/10 text-teal-400 border border-teal-500/15 font-black">城市派单员司机</span>;
+                              default:
+                                return <span className="px-2 py-1 rounded bg-slate-500/10 text-slate-400 border border-slate-500/15 font-black">普通司机</span>;
+                            }
+                          };
+
+                          return (
+                            <tr key={member.id} className="hover:bg-slate-900/30 group">
+                              <td className="px-4 py-3 font-mono font-bold text-slate-300">
+                                {member.phone}
+                              </td>
+                              <td className="px-4 py-3 text-[11px]">
+                                {getRoleBadge(member.role)}
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="flex flex-col">
+                                  <span className="font-extrabold text-slate-200">
+                                    {member.remark || '暂无备注'}
+                                  </span>
+                                  {registered && (
+                                    <span className="text-[10px] text-emerald-400">
+                                      已同步系统用户: {registered.driverName || '未设置名字'}
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-slate-500 text-[11px]">
+                                {member.createdAt ? member.createdAt.slice(0, 16).replace('T', ' ') : '暂无'}
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteTeamMember(member.phone)}
+                                  className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
+                                  title="移除团队成员"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+            </div>
+          </div>
         )}
 
       </div>

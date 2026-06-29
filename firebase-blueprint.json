@@ -47,6 +47,19 @@
         "updatedAt": { "type": "string" }
       },
       "required": ["driverPhone", "driverName", "driverGender", "driverAge", "emergencyPhone", "drivingYears", "idCardFront", "idCardBack", "driverLicenseFront", "driverLicenseBack", "status"]
+    },
+    "TeamMember": {
+      "title": "TeamMember",
+      "description": "Staff and team roles mapped by mobile phone number",
+      "type": "object",
+      "properties": {
+        "phone": { "type": "string" },
+        "role": { "type": "string" },
+        "city": { "type": "string" },
+        "remark": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["phone", "role"]
     }
   },
   "firestore": {
@@ -61,6 +74,10 @@
     "/online_applications/{phoneNumber}": {
       "schema": "OnlineApplication",
       "description": "Driver application details for online dispatch orders waitlisted for approval"
+    },
+    "/team_members/{phone}": {
+      "schema": "TeamMember",
+      "description": "Team members list with their administrative and operational hierarchy roles"
     }
   }
 }

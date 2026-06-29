@@ -8,10 +8,11 @@ interface IncomingOrderOverlayProps {
     destination?: string;
     timestamp?: number;
     isValetOrder?: boolean;
-    approxPrice?: number;
+    approxPrice?: any;
     distanceText?: string;
     passengerLat?: number | null;
     passengerLng?: number | null;
+    isPlatformDispatch?: boolean;
   };
   driverCoords?: { lat: number; lng: number } | null;
   onlineBillingRules?: BillingRules;
@@ -43,12 +44,13 @@ function calculateHaversineDistance(lat1: number, lng1: number, lat2: number, ln
  * - distanceText: 乘客直线距离（例如 "280米" 或 "1.2公里"）
  */
 export function getTTSBroadcastText(
-  approxPrice: number,
+  approxPrice: any,
   startLocation: string,
   destination: string,
   distanceText: string
 ): string {
-  return `叮，您有新订单啦！预估金额为 ${approxPrice} 元。距离您：${distanceText}。起点：${startLocation}。终点：${destination}。请在三十秒内进行确认。`;
+  const priceStr = approxPrice === '未知' ? '未知' : `${approxPrice}`;
+  return `叮，您有新订单啦！预估金额为 ${priceStr} 元。距离您：${distanceText}。起点：${startLocation}。终点：${destination}。请在三十秒内进行确认。`;
 }
 
 export const IncomingOrderOverlay: React.FC<IncomingOrderOverlayProps> = ({
@@ -66,8 +68,8 @@ export const IncomingOrderOverlay: React.FC<IncomingOrderOverlayProps> = ({
   const passengerPhone = order.passengerPhone || '系统分配乘客';
   
   // Dynamic random price if not specified
-  const [approxPrice] = useState(() => {
-    if (order.approxPrice) return order.approxPrice;
+  const [approxPrice] = useState<any>(() => {
+    if (order.approxPrice !== undefined) return order.approxPrice;
     
     if (onlineBillingRules && onlineBillingRules.slots && onlineBillingRules.slots.length > 0) {
       try {
@@ -268,18 +270,28 @@ export const IncomingOrderOverlay: React.FC<IncomingOrderOverlayProps> = ({
 
         {/* Income Display */}
         <div className="flex flex-col items-center my-2">
-          <div className="flex items-baseline justify-center">
-            <span className="text-xl font-bold mr-1 opacity-90">约</span>
-            <span className="text-6xl font-black tracking-tight" style={{ fontFamily: 'sans-serif' }}>
-              {approxPrice}
-            </span>
-            <span className="text-xl font-bold ml-1 opacity-90">元</span>
-          </div>
+          {order.isPlatformDispatch || approxPrice === '未知' ? (
+            <div className="flex items-baseline justify-center">
+              <span className="text-xl font-bold mr-1 opacity-90">约</span>
+              <span className="text-5xl font-black tracking-tight animate-pulse" style={{ fontFamily: 'sans-serif' }}>
+                未知
+              </span>
+              <span className="text-xl font-bold ml-1 opacity-90">元</span>
+            </div>
+          ) : (
+            <div className="flex items-baseline justify-center">
+              <span className="text-xl font-bold mr-1 opacity-90">约</span>
+              <span className="text-6xl font-black tracking-tight" style={{ fontFamily: 'sans-serif' }}>
+                {approxPrice}
+              </span>
+              <span className="text-xl font-bold ml-1 opacity-90">元</span>
+            </div>
+          )}
         </div>
 
         {/* Service Badge */}
         <div className="border border-white/40 rounded-full py-1.5 px-6 font-medium text-sm mt-3 bg-white/5 backdrop-blur-xs tracking-wide">
-          {onlineBillingRules?.templateName?.trim() ? onlineBillingRules.templateName : "XX代驾"}
+          {order.isPlatformDispatch ? "商户代叫订单" : (onlineBillingRules?.templateName?.trim() ? onlineBillingRules.templateName : "XX代驾")}
         </div>
       </header>
 

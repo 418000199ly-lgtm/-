@@ -191,6 +191,7 @@ export default function App() {
     return localStorage.getItem('dd_user_phone');
   });
   const [incomingOrder, setIncomingOrder] = useState<any>(null);
+  const [activeOnlineOrder, setActiveOnlineOrder] = useState<any>(null);
   const [driverCoords, setDriverCoords] = useState<{ lat: number; lng: number }>({
     lat: 38.487193,
     lng: 106.230912
@@ -501,8 +502,8 @@ export default function App() {
         const data = docSnap.data();
         if (data && data.status === 'submitted') {
           const submitTime = data.timestamp || 0;
-          // Verify submission timestamp to avoid processing historical stales (last 5 mins)
-          if (submitTime > Date.now() - 300000) {
+          // Verify submission timestamp to avoid processing historical stales (last 1 hour to prevent clock skews)
+          if (submitTime > Date.now() - 3600000) {
             // Only trigger if we are NOT on the 'create_order' (手动报单) view
             if (currentView !== 'create_order') {
               setIncomingOrder(data);
@@ -517,10 +518,10 @@ export default function App() {
 
   const handleAcceptIncomingOrder = (trip: TripState) => {
     if (!userPhone) return;
-    setCurrentTrip(trip);
-    setCurrentView('navigation');
+    setActiveOnlineOrder(incomingOrder);
+    setCurrentView('create_order');
     setIncomingOrder(null);
-    triggerToast('✓ 成功确认接单！线上单已直接并入计费导航大屏。');
+    triggerToast('✓ 成功确认接单！已自动为您规划骑行前往接客起点的路线。');
     // Clear/delete the passenger link doc to finish the session
     deleteDoc(doc(db, 'passenger_links', userPhone)).catch(err => {
       console.error("Error clearing accepted passenger order link document:", err);
@@ -790,7 +791,13 @@ export default function App() {
             settings={settings}
             userPhone={userPhone}
             onStartTrip={handleStartTrip}
-            onNavigateBack={() => setCurrentView('home')}
+            onNavigateBack={() => {
+              setActiveOnlineOrder(null);
+              setCurrentView('home');
+            }}
+            driverCoords={driverCoords}
+            activeOnlineOrder={activeOnlineOrder}
+            onClearOnlineOrder={() => setActiveOnlineOrder(null)}
           />
         );
 
@@ -868,6 +875,7 @@ export default function App() {
             onUpdateSettings={handleUpdateSettings}
             userPhone={userPhone}
             onLogout={handleLogout}
+            driverCoords={driverCoords}
           />
         );
     }

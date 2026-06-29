@@ -87,6 +87,9 @@ interface CreateOrderViewProps {
   userPhone: string | null;
   onStartTrip: (trip: TripState) => void;
   onNavigateBack: () => void;
+  driverCoords?: { lat: number; lng: number } | null;
+  activeOnlineOrder?: any;
+  onClearOnlineOrder?: () => void;
 }
 
 export default function CreateOrderView({
@@ -94,14 +97,30 @@ export default function CreateOrderView({
   settings,
   userPhone,
   onStartTrip,
-  onNavigateBack
+  onNavigateBack,
+  driverCoords,
+  activeOnlineOrder,
+  onClearOnlineOrder
 }: CreateOrderViewProps) {
   const registeredCity = settings?.city || '';
   const [startLocation, setStartLocation] = useState(() => {
+    if (activeOnlineOrder) {
+      return '我的当前位置';
+    }
     return registeredCity ? `${registeredCity}万达广场住宅区` : '兴庆区政府住宅区';
   });
-  const [destination, setDestination] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState('');
+  const [destination, setDestination] = useState(() => {
+    if (activeOnlineOrder) {
+      return activeOnlineOrder.startLocation || '';
+    }
+    return '';
+  });
+  const [phoneNumber, setPhoneNumber] = useState(() => {
+    if (activeOnlineOrder) {
+      return activeOnlineOrder.passengerPhone || '';
+    }
+    return '';
+  });
 
   const startLocationRef = useRef(startLocation);
   const destinationRef = useRef(destination);
@@ -159,6 +178,12 @@ export default function CreateOrderView({
   const debounceTimerRef = useRef<any>(null);
   const prefetchedCoordsRef = useRef<{ lng: number; lat: number } | null>(null);
   const prefetchedGeocodedRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    if (driverCoords) {
+      prefetchedCoordsRef.current = { lng: driverCoords.lng, lat: driverCoords.lat };
+    }
+  }, [driverCoords]);
 
   useEffect(() => {
     // 0. Start high-accuracy native geolocation pre-fetching in parallel immediately on page open
@@ -480,9 +505,10 @@ export default function CreateOrderView({
     }
   }, [isEditingStart, startLocation]);
 
-  // AMap Driving Route planning for distance calculation and map display
+  // AMap Driving/Riding Route planning for distance calculation and map display
   const [routeDistance, setRouteDistance] = useState<number | null>(null);
   const drivingInstanceRef = useRef<any>(null);
+  const ridingInstanceRef = useRef<any>(null);
 
   useEffect(() => {
     const AMap = (window as any).AMap;
@@ -491,69 +517,122 @@ export default function CreateOrderView({
 
     if (!startLocation || !destination) {
       if (drivingInstanceRef.current) {
-        try {
-          drivingInstanceRef.current.clear();
-        } catch (_) {}
+        try { drivingInstanceRef.current.clear(); } catch (_) {}
+      }
+      if (ridingInstanceRef.current) {
+        try { ridingInstanceRef.current.clear(); } catch (_) {}
       }
       setRouteDistance(null);
       return;
     }
 
     const delayDebounce = setTimeout(() => {
-      AMap.plugin('AMap.Driving', () => {
-        try {
-          if (!drivingInstanceRef.current) {
-            drivingInstanceRef.current = new AMap.Driving({
-              map: map,
-              hideMarkers: false,
-              autoFitView: true,
-              city: registeredCity || '银川市'
-            });
-          } else {
-            try {
-              drivingInstanceRef.current.clear();
-            } catch (_) {}
-          }
-
-          isMapMovingProgrammaticallyRef.current = true;
-          drivingInstanceRef.current.search(
-            [
-              { keyword: startLocation, city: registeredCity || '银川市' },
-              { keyword: destination, city: registeredCity || '银川市' }
-            ],
-            (status: string, result: any) => {
-              // Delay the flag reset to ensure all fitView animations/movement finished completely
-              setTimeout(() => {
-                isMapMovingProgrammaticallyRef.current = false;
-              }, 1500);
-
-              if (status === 'complete' && result.routes && result.routes[0]) {
-                const distanceMeters = result.routes[0].distance;
-                const distanceKm = Number((distanceMeters / 1000).toFixed(2));
-                setRouteDistance(distanceKm);
-              } else {
-                console.warn('AMap.Driving status:', status, result);
-                setRouteDistance(null);
-              }
+      if (activeOnlineOrder) {
+        AMap.plugin('AMap.Riding', () => {
+          try {
+            if (drivingInstanceRef.current) {
+              try { drivingInstanceRef.current.clear(); } catch (_) {}
             }
-          );
-        } catch (e) {
-          console.warn('Initializing or using AMap.Driving failed:', e);
-        }
-      });
+            if (!ridingInstanceRef.current) {
+              ridingInstanceRef.current = new AMap.Riding({
+                map: map,
+                hideMarkers: false,
+                autoFitView: true
+              });
+            } else {
+              try { ridingInstanceRef.current.clear(); } catch (_) {}
+            }
+
+            isMapMovingProgrammaticallyRef.current = true;
+
+            const startPt = driverCoords 
+              ? new AMap.LngLat(driverCoords.lng, driverCoords.lat)
+              : startLocation;
+
+            const endPt = (activeOnlineOrder.passengerLng && activeOnlineOrder.passengerLat)
+              ? new AMap.LngLat(activeOnlineOrder.passengerLng, activeOnlineOrder.passengerLat)
+              : destination;
+
+            ridingInstanceRef.current.search(
+              startPt,
+              endPt,
+              (status: string, result: any) => {
+                setTimeout(() => {
+                  isMapMovingProgrammaticallyRef.current = false;
+                }, 1500);
+
+                if (status === 'complete' && result.routes && result.routes[0]) {
+                  const distanceMeters = result.routes[0].distance;
+                  const distanceKm = Number((distanceMeters / 1000).toFixed(2));
+                  setRouteDistance(distanceKm);
+                } else {
+                  console.warn('AMap.Riding status:', status, result);
+                  setRouteDistance(null);
+                }
+              }
+            );
+          } catch (e) {
+            console.warn('Initializing or using AMap.Riding failed:', e);
+          }
+        });
+      } else {
+        AMap.plugin('AMap.Driving', () => {
+          try {
+            if (ridingInstanceRef.current) {
+              try { ridingInstanceRef.current.clear(); } catch (_) {}
+            }
+            if (!drivingInstanceRef.current) {
+              drivingInstanceRef.current = new AMap.Driving({
+                map: map,
+                hideMarkers: false,
+                autoFitView: true,
+                city: registeredCity || '银川市'
+              });
+            } else {
+              try { drivingInstanceRef.current.clear(); } catch (_) {}
+            }
+
+            isMapMovingProgrammaticallyRef.current = true;
+            drivingInstanceRef.current.search(
+              [
+                { keyword: startLocation, city: registeredCity || '银川市' },
+                { keyword: destination, city: registeredCity || '银川市' }
+              ],
+              (status: string, result: any) => {
+                setTimeout(() => {
+                  isMapMovingProgrammaticallyRef.current = false;
+                }, 1500);
+
+                if (status === 'complete' && result.routes && result.routes[0]) {
+                  const distanceMeters = result.routes[0].distance;
+                  const distanceKm = Number((distanceMeters / 1000).toFixed(2));
+                  setRouteDistance(distanceKm);
+                } else {
+                  console.warn('AMap.Driving status:', status, result);
+                  setRouteDistance(null);
+                }
+              }
+            );
+          } catch (e) {
+            console.warn('Initializing or using AMap.Driving failed:', e);
+          }
+        });
+      }
     }, 100);
 
     return () => clearTimeout(delayDebounce);
-  }, [startLocation, destination, mapLoaded, registeredCity]);
+  }, [startLocation, destination, mapLoaded, registeredCity, activeOnlineOrder, driverCoords]);
 
-  // Clean up driving instance on unmount
+  // Clean up driving and riding instances on unmount
   useEffect(() => {
     return () => {
       if (drivingInstanceRef.current) {
-        try {
-          drivingInstanceRef.current.clear();
-        } catch (_) {}
+        try { drivingInstanceRef.current.clear(); } catch (_) {}
         drivingInstanceRef.current = null;
+      }
+      if (ridingInstanceRef.current) {
+        try { ridingInstanceRef.current.clear(); } catch (_) {}
+        ridingInstanceRef.current = null;
       }
     };
   }, []);
@@ -746,6 +825,34 @@ export default function CreateOrderView({
       console.warn(`出发地（当前输入：${startLocation}）不在线上认证的听单开通城市（${registeredCity}）范围内。但因属于线下自助报单，已放行创建订单。`);
     }
     
+    if (activeOnlineOrder) {
+      const isValet = activeOnlineOrder.isValetOrder || activeOnlineOrder.isPlatformDispatch;
+      const newTrip: TripState = {
+        id: 'OL' + Math.floor(Math.random() * 900000 + 100000),
+        orderNumber: activeOnlineOrder.id || ('DD' + Date.now().toString().slice(-8)),
+        passengerName: isValet ? '商户代叫乘客' : '线上自助预约乘客',
+        passengerPhone: targetPhone,
+        // The actual trip is from the passenger's pickup location to the passenger's end location
+        startLocation: activeOnlineOrder.startLocation || startLocation,
+        endLocation: activeOnlineOrder.destination || targetDestination,
+        startTimestamp: Date.now(),
+        currentDistance: 0.0,
+        currentWaitingTime: 0,
+        currentStatus: 'serving',
+        extraBridgeFee: 0,
+        extraParkingFee: 0,
+        extraOtherFee: 0,
+        calculatedBaseFee: startingFeeApplied,
+        calculatedTotalFee: startingFeeApplied,
+        weatherMultiplier: weatherMultiplier,
+        isOnlineOrder: true,
+        orderType: isValet ? '后台指派订单' : '乘客下单'
+      };
+      onStartTrip(newTrip);
+      if (onClearOnlineOrder) onClearOnlineOrder();
+      return;
+    }
+
     const newTrip: TripState = {
       id: 'Z' + Math.floor(Math.random() * 900000 + 100000),
       orderNumber: 'DD' + Date.now().toString().slice(-8),
@@ -801,14 +908,21 @@ export default function CreateOrderView({
             <path d="M15 19l-7-7 7-7" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
           </svg>
         </button>
-        <div 
-          onClick={() => setShowQrModal(true)}
-          className="bg-white px-4 py-2 rounded-full shadow-lg flex items-center gap-1.5 cursor-pointer active:scale-95 transition-transform border border-teal-500/10 hover:bg-teal-50/50 pointer-events-auto" 
-          data-purpose="qr-order-trigger"
-        >
-          <QrCode className="w-3.5 h-3.5 text-[#189F95]" />
-          <span className="text-xs font-bold text-gray-700">二维码创单</span>
-        </div>
+        {activeOnlineOrder ? (
+          <div className="bg-teal-600 text-white px-4 py-2 rounded-full shadow-lg flex items-center gap-1.5 border border-teal-500/10 pointer-events-auto animate-pulse">
+            <span className="w-1.5 h-1.5 bg-white rounded-full"></span>
+            <span className="text-xs font-black">接单骑行：前往乘客起点</span>
+          </div>
+        ) : (
+          <div 
+            onClick={() => setShowQrModal(true)}
+            className="bg-white px-4 py-2 rounded-full shadow-lg flex items-center gap-1.5 cursor-pointer active:scale-95 transition-transform border border-teal-500/10 hover:bg-teal-50/50 pointer-events-auto" 
+            data-purpose="qr-order-trigger"
+          >
+            <QrCode className="w-3.5 h-3.5 text-[#189F95]" />
+            <span className="text-xs font-bold text-gray-700">二维码创单</span>
+          </div>
+        )}
       </header>
       {/* END: NavigationHeader */}
 
@@ -816,30 +930,32 @@ export default function CreateOrderView({
       <main className="flex-grow relative z-10 flex flex-col justify-between pointer-events-none">
         
         {/* Center Map Marker (Static pin indicator in center - aligned to true map center) */}
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-full flex flex-col items-center pointer-events-none" data-purpose="pickup-location-marker">
-          <div className="bg-white px-3.5 py-1.5 rounded-lg shadow-xl border border-gray-100 mb-1 whitespace-nowrap flex items-center gap-1.5 animate-bounce pointer-events-auto">
-            <span className="w-2 h-2 rounded-full bg-[#189F95]"></span>
-            {isEditingStart ? (
-              <input
-                type="text"
-                value={startLocation}
-                onChange={(e) => setStartLocation(e.target.value)}
-                onBlur={() => setIsEditingStart(false)}
-                autoFocus
-                className="text-xs font-bold text-gray-800 bg-transparent border-b border-gray-300 focus:outline-hidden p-0 max-w-[140px] pointer-events-auto"
-              />
-            ) : (
-              <span 
-                onClick={() => setIsEditingStart(true)}
-                className="text-xs font-black text-gray-800 cursor-pointer hover:underline pointer-events-auto"
-              >
-                {startLocation}
-              </span>
-            )}
+        {!activeOnlineOrder && !routeDistance && (
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-full flex flex-col items-center pointer-events-none" data-purpose="pickup-location-marker">
+            <div className="bg-white px-3.5 py-1.5 rounded-lg shadow-xl border border-gray-100 mb-1 whitespace-nowrap flex items-center gap-1.5 animate-bounce pointer-events-auto">
+              <span className="w-2 h-2 rounded-full bg-[#189F95]"></span>
+              {isEditingStart ? (
+                <input
+                  type="text"
+                  value={startLocation}
+                  onChange={(e) => setStartLocation(e.target.value)}
+                  onBlur={() => setIsEditingStart(false)}
+                  autoFocus
+                  className="text-xs font-bold text-gray-800 bg-transparent border-b border-gray-300 focus:outline-hidden p-0 max-w-[140px] pointer-events-auto"
+                />
+              ) : (
+                <span 
+                  onClick={() => setIsEditingStart(true)}
+                  className="text-xs font-black text-gray-800 cursor-pointer hover:underline pointer-events-auto"
+                >
+                  {startLocation}
+                </span>
+              )}
+            </div>
+            <div className="w-0.5 h-6 bg-black shadow-lg"></div>
+            <div className="w-2 h-2 bg-black rounded-full -mt-1 shadow-md"></div>
           </div>
-          <div className="w-0.5 h-6 bg-black shadow-lg"></div>
-          <div className="w-2 h-2 bg-black rounded-full -mt-1 shadow-md"></div>
-        </div>
+        )}
 
         {/* Spacer for filling up remaining section */}
         <div className="flex-grow"></div>
@@ -974,7 +1090,11 @@ export default function CreateOrderView({
               </span>
             </div>
             <p className="text-gray-400 text-[10px] scale-95 origin-left mt-1 font-medium select-none">
-              {routeDistance !== null ? (
+              {activeOnlineOrder ? (
+                <span className="text-orange-600 font-bold">
+                  🏍️ 骑行距离: {routeDistance ? `${routeDistance.toFixed(2)}公里` : '计算中...'}
+                </span>
+              ) : routeDistance !== null ? (
                 <span className="text-teal-600 font-bold">
                   预估里程: {routeDistance.toFixed(2)}公里 (起步含{activeSlot.includedDistance}公里)
                 </span>
@@ -988,10 +1108,10 @@ export default function CreateOrderView({
           
           <button 
             onClick={handleCreateOrder}
-            className="bg-[#189F95] hover:bg-[#158C83] text-white px-8 py-3.5 rounded-xl font-bold text-base active:scale-95 shadow-md shadow-[#189F95]/25 transition-all" 
+            className="bg-[#189F95] hover:bg-[#158C83] text-white px-8 py-3.5 rounded-xl font-bold text-base active:scale-95 shadow-md shadow-[#189F95]/25 transition-all font-sans" 
             data-purpose="submit-order"
           >
-            创建订单
+            {activeOnlineOrder ? "创建订单 (开始计费)" : "创建订单"}
           </button>
         </div>
 
