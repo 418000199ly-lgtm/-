@@ -144,7 +144,7 @@ export default function App() {
             parsed.todayIncome = 0.00;
             parsed.lastResetDate = currentDay;
           }
-          return parsed;
+          return { ...defaultStats, ...parsed };
         } catch {
           return defaultStats;
         }
@@ -163,7 +163,7 @@ export default function App() {
         parsed.todayIncome = 0.00;
         parsed.lastResetDate = currentDay;
       }
-      return parsed;
+      return { ...defaultStats, ...parsed };
     } catch {
       return defaultStats;
     }
@@ -583,8 +583,41 @@ export default function App() {
     if (currentTrip) {
       try {
         const existingStr = localStorage.getItem('dd_driver_orders');
-        const orders = existingStr ? JSON.parse(existingStr) : [];
+        let orders = existingStr ? JSON.parse(existingStr) : [];
+        if (!Array.isArray(orders)) orders = [];
         const now = new Date();
+        const sixMonthsAgo = new Date();
+        sixMonthsAgo.setMonth(now.getMonth() - 6);
+
+        // Filter out orders older than half a year (6 months)
+        orders = orders.filter((order: any) => {
+          if (!order) return false;
+          if (order.timestamp) {
+            return new Date(order.timestamp) >= sixMonthsAgo;
+          }
+          if (order.id && !isNaN(Number(order.id))) {
+            const ts = Number(order.id);
+            if (ts > 1500000000000) {
+              return new Date(ts) >= sixMonthsAgo;
+            }
+          }
+          if (order.timeStr && typeof order.timeStr === 'string') {
+            const parts = order.timeStr.match(/(\d+)-(\d+)\s+(\d+):(\d+)/);
+            if (parts) {
+              const month = parseInt(parts[1], 10) - 1;
+              const day = parseInt(parts[2], 10);
+              const hour = parseInt(parts[3], 10);
+              const min = parseInt(parts[4], 10);
+              const orderDate = new Date(now.getFullYear(), month, day, hour, min);
+              if (orderDate > now) {
+                orderDate.setFullYear(now.getFullYear() - 1);
+              }
+              return orderDate >= sixMonthsAgo;
+            }
+          }
+          return true;
+        });
+
         const month = String(now.getMonth() + 1).padStart(2, '0');
         const day = String(now.getDate()).padStart(2, '0');
         const hours = String(now.getHours()).padStart(2, '0');
@@ -593,6 +626,7 @@ export default function App() {
         const newOrder = {
           id: currentTrip.id || Date.now().toString(),
           timeStr: `${month}-${day} ${hours}:${minutes}`,
+          timestamp: Date.now(),
           amount: amount,
           startLocation: currentTrip.startLocation || '未定位起点',
           endLocation: currentTrip.endLocation || '未定位终点',

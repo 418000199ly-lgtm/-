@@ -111,6 +111,33 @@ export const IncomingOrderOverlay: React.FC<IncomingOrderOverlayProps> = ({
     return prices[randomIndex];
   });
 
+  // Find current active slot starting price from onlineBillingRules
+  const startPrice = React.useMemo(() => {
+    if (onlineBillingRules && onlineBillingRules.slots && onlineBillingRules.slots.length > 0) {
+      try {
+        const activeHour = new Date().getHours();
+        let activeSlot = onlineBillingRules.slots[0];
+        for (const slot of onlineBillingRules.slots) {
+          const [startH] = slot.startTime.split(':').map(Number);
+          const [endH] = slot.endTime.split(':').map(Number);
+          if (startH > endH) {
+            if (activeHour >= startH || activeHour <= endH) {
+              activeSlot = slot;
+              break;
+            }
+          } else if (activeHour >= startH && activeHour <= endH) {
+            activeSlot = slot;
+            break;
+          }
+        }
+        return activeSlot.startingPrice;
+      } catch (e) {
+        console.warn('Error calculating starting price:', e);
+      }
+    }
+    return 35; // default fallback starting price
+  }, [onlineBillingRules]);
+
   const distanceText = React.useMemo(() => {
     if (order.passengerLat && order.passengerLng && driverCoords) {
       const distInKm = calculateHaversineDistance(
@@ -214,8 +241,8 @@ export const IncomingOrderOverlay: React.FC<IncomingOrderOverlayProps> = ({
       extraBridgeFee: 0,
       extraParkingFee: 0,
       extraOtherFee: 0,
-      calculatedBaseFee: approxPrice,
-      calculatedTotalFee: approxPrice,
+      calculatedBaseFee: startPrice,
+      calculatedTotalFee: startPrice,
       isOnlineOrder: true,
       orderType: order.isValetOrder ? '后台指派订单' : '乘客下单',
     };

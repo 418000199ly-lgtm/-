@@ -207,14 +207,14 @@ export default function AdminBillingRules({ onShowToast }: AdminBillingRulesProp
     setEditingTemplate(template);
     setEditName(template.templateName);
     setEditSlots(JSON.parse(JSON.stringify(template.slots))); // Deep copy
-    setEditReturnStartKm(template.returnFeeStartKm || 15);
-    setEditReturnPerKm(template.returnFeePerKm || 2);
-    setEditReturnIntervalKm(template.returnFeeIntervalKm || 1);
-    setEditReturnIncrease(template.returnFeeIncreaseYuan || 2);
-    setEditFreeWaitingTime(template.freeWaitingTime || 15);
-    setEditWaitingPerMin(template.waitingChargePerMin || 1);
-    setEditWaitingInterval(template.waitingIntervalMin || 1);
-    setEditWaitingIncrease(template.waitingIncreaseYuan || 1);
+    setEditReturnStartKm(template.returnFeeStartKm !== undefined ? template.returnFeeStartKm : 15);
+    setEditReturnPerKm(template.returnFeePerKm !== undefined ? template.returnFeePerKm : 2);
+    setEditReturnIntervalKm(template.returnFeeIntervalKm !== undefined ? template.returnFeeIntervalKm : 1);
+    setEditReturnIncrease(template.returnFeeIncreaseYuan !== undefined ? template.returnFeeIncreaseYuan : 2);
+    setEditFreeWaitingTime(template.freeWaitingTime !== undefined ? template.freeWaitingTime : 15);
+    setEditWaitingPerMin(template.waitingChargePerMin !== undefined ? template.waitingChargePerMin : 1);
+    setEditWaitingInterval(template.waitingIntervalMin !== undefined ? template.waitingIntervalMin : 1);
+    setEditWaitingIncrease(template.waitingIncreaseYuan !== undefined ? template.waitingIncreaseYuan : 1);
     
     setActiveMenuTemplate(null);
   };
@@ -260,17 +260,27 @@ export default function AdminBillingRules({ onShowToast }: AdminBillingRulesProp
       }
     }
 
+    const rStart = isNaN(Number(editReturnStartKm)) ? 15 : Number(editReturnStartKm);
+    const rInterval = isNaN(Number(editReturnIntervalKm)) || Number(editReturnIntervalKm) <= 0 ? 1 : Number(editReturnIntervalKm);
+    const rIncrease = isNaN(Number(editReturnIncrease)) ? 2 : Number(editReturnIncrease);
+    const calculatedReturnFeePerKm = rInterval > 0 ? Number((rIncrease / rInterval).toFixed(4)) : 0;
+
+    const fWait = isNaN(Number(editFreeWaitingTime)) ? 15 : Number(editFreeWaitingTime);
+    const wInterval = isNaN(Number(editWaitingInterval)) || Number(editWaitingInterval) <= 0 ? 1 : Number(editWaitingInterval);
+    const wIncrease = isNaN(Number(editWaitingIncrease)) ? 1 : Number(editWaitingIncrease);
+    const calculatedWaitingPerMin = wInterval > 0 ? Number((wIncrease / wInterval).toFixed(4)) : 0;
+
     const updatedTemplate: BillingRules = {
       templateName: editName.trim(),
       slots: editSlots,
-      returnFeeStartKm: editReturnStartKm,
-      returnFeePerKm: editReturnPerKm,
-      returnFeeIntervalKm: editReturnIntervalKm,
-      returnFeeIncreaseYuan: editReturnIncrease,
-      freeWaitingTime: editFreeWaitingTime,
-      waitingChargePerMin: editWaitingPerMin,
-      waitingIntervalMin: editWaitingInterval,
-      waitingIncreaseYuan: editWaitingIncrease,
+      returnFeeStartKm: rStart,
+      returnFeePerKm: calculatedReturnFeePerKm,
+      returnFeeIntervalKm: rInterval,
+      returnFeeIncreaseYuan: rIncrease,
+      freeWaitingTime: fWait,
+      waitingChargePerMin: calculatedWaitingPerMin,
+      waitingIntervalMin: wInterval,
+      waitingIncreaseYuan: wIncrease,
     };
 
     // Replace original template in list

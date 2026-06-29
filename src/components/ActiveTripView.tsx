@@ -287,6 +287,9 @@ export default function ActiveTripView({
 
   // Adjust distance manually (deviation helper to adjust on simulated app preview)
   const handleAdjustDistance = (amount: number) => {
+    if (trip.isOnlineOrder) {
+      return;
+    }
     if (!checkVipActive(settings.vipExpiry)) {
       triggerToast('🔒 提示：纠偏功能为VIP会员专属特权！');
       return;
@@ -308,6 +311,9 @@ export default function ActiveTripView({
 
   // Adjust waiting time manually (deviation helper to adjust waiting duration)
   const handleAdjustWaitingTime = (amountMins: number) => {
+    if (trip.isOnlineOrder) {
+      return;
+    }
     if (!checkVipActive(settings.vipExpiry)) {
       triggerToast('🔒 提示：纠偏功能为VIP会员专属特权！');
       return;
@@ -336,6 +342,10 @@ export default function ActiveTripView({
     // Avoid triggering when double clicking interactive buttons or dialogs
     const target = e.target as HTMLElement;
     if (target.closest('button') || target.closest('[role="dialog"]') || target.closest('header')) {
+      return;
+    }
+
+    if (trip.isOnlineOrder) {
       return;
     }
 
@@ -480,11 +490,13 @@ export default function ActiveTripView({
             <button
               onClick={(e) => { e.stopPropagation(); handleAdjustDistance(1.0); }}
               className={`w-1/2 bg-white ${
-                settings.deviationMitigation 
-                  ? 'hover:bg-emerald-50/5 active:bg-emerald-50/20 cursor-pointer' 
-                  : 'cursor-not-allowed opacity-90'
+                trip.isOnlineOrder
+                  ? 'cursor-default'
+                  : settings.deviationMitigation 
+                    ? 'hover:bg-emerald-50/5 active:bg-emerald-50/20 cursor-pointer' 
+                    : 'cursor-not-allowed opacity-90'
               } transition-colors flex items-center justify-center p-3 relative focus:outline-hidden focus:ring-0 select-none`}
-              title={settings.deviationMitigation ? "纠偏里程增加 1 公里" : "纠偏功能已在设置中禁用"}
+              title={trip.isOnlineOrder ? undefined : (settings.deviationMitigation ? "纠偏里程增加 1 公里" : "纠偏功能已在设置中禁用")}
             >
             </button>
 
@@ -492,16 +504,18 @@ export default function ActiveTripView({
             <button
               onClick={(e) => { e.stopPropagation(); handleAdjustDistance(-1.0); }}
               className={`w-1/2 bg-white ${
-                settings.deviationMitigation 
-                  ? 'hover:bg-rose-50/5 active:bg-rose-50/20 cursor-pointer' 
-                  : 'cursor-not-allowed opacity-90'
+                trip.isOnlineOrder
+                  ? 'cursor-default'
+                  : settings.deviationMitigation 
+                    ? 'hover:bg-rose-50/5 active:bg-rose-50/20 cursor-pointer' 
+                    : 'cursor-not-allowed opacity-90'
               } transition-colors flex items-center justify-center p-3 relative focus:outline-hidden focus:ring-0 select-none`}
-              title={settings.deviationMitigation ? "纠偏里程减少 1 公里" : "纠偏功能已在设置中禁用"}
+              title={trip.isOnlineOrder ? undefined : (settings.deviationMitigation ? "纠偏里程减少 1 公里" : "纠偏功能已在设置中禁用")}
             >
             </button>
 
             {/* Centered Overlay Badge: Show current distance value and status label */}
-            <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none select-none z-10 flex flex-col items-center justify-center min-w-[100px] ${!settings.deviationMitigation ? 'opacity-65' : ''}`}>
+            <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none select-none z-10 flex flex-col items-center justify-center min-w-[100px] ${(!settings.deviationMitigation || trip.isOnlineOrder) ? 'opacity-65' : ''}`}>
               <div className="text-2xl font-black text-[#26a69a] font-mono leading-none mb-1">
                 {trip.currentDistance.toFixed(2)}
               </div>
@@ -520,11 +534,13 @@ export default function ActiveTripView({
             <button
               onClick={(e) => { e.stopPropagation(); handleAdjustWaitingTime(1); }}
               className={`w-1/2 bg-white ${
-                settings.deviationMitigation 
-                  ? 'hover:bg-emerald-50/5 active:bg-emerald-50/20 cursor-pointer' 
-                  : 'cursor-not-allowed opacity-90'
+                trip.isOnlineOrder
+                  ? 'cursor-default'
+                  : settings.deviationMitigation 
+                    ? 'hover:bg-emerald-50/5 active:bg-emerald-50/20 cursor-pointer' 
+                    : 'cursor-not-allowed opacity-90'
               } transition-colors flex items-center justify-center p-3 relative focus:outline-hidden focus:ring-0 select-none`}
-              title={settings.deviationMitigation ? "增加一分钟" : "纠偏功能已在设置中禁用"}
+              title={trip.isOnlineOrder ? undefined : (settings.deviationMitigation ? "增加一分钟" : "纠偏功能已在设置中禁用")}
             >
             </button>
 
@@ -532,16 +548,18 @@ export default function ActiveTripView({
             <button
               onClick={(e) => { e.stopPropagation(); handleAdjustWaitingTime(-1); }}
               className={`w-1/2 bg-white ${
-                settings.deviationMitigation 
-                  ? 'hover:bg-rose-50/5 active:bg-rose-50/20 cursor-pointer' 
-                  : 'cursor-not-allowed opacity-90'
+                trip.isOnlineOrder
+                  ? 'cursor-default'
+                  : settings.deviationMitigation 
+                    ? 'hover:bg-rose-50/5 active:bg-rose-50/20 cursor-pointer' 
+                    : 'cursor-not-allowed opacity-90'
               } transition-colors flex items-center justify-center p-3 relative focus:outline-hidden focus:ring-0 select-none`}
-              title={settings.deviationMitigation ? "减少一分钟" : "纠偏功能已在设置中禁用"}
+              title={trip.isOnlineOrder ? undefined : (settings.deviationMitigation ? "减少一分钟" : "纠偏功能已在设置中禁用")}
             >
             </button>
 
             {/* Centered Overlay Badge: Show current waiting metrics and status labels */}
-            <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none select-none z-10 flex flex-col items-center justify-center min-w-[124px] ${!settings.deviationMitigation ? 'opacity-65' : ''}`}>
+            <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none select-none z-10 flex flex-col items-center justify-center min-w-[124px] ${(!settings.deviationMitigation || trip.isOnlineOrder) ? 'opacity-65' : ''}`}>
               <div className="text-2xl font-black text-[#26a69a] font-mono leading-none text-center">
                 {formatHms(waitingSeconds)}
               </div>

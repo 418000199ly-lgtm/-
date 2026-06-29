@@ -53,6 +53,54 @@ interface HomeViewProps {
   onLogout?: () => void;
 }
 
+const filterOrdersWithinSixMonths = (orders: any[]): any[] => {
+  if (!Array.isArray(orders)) return [];
+  const now = new Date();
+  const sixMonthsAgo = new Date();
+  sixMonthsAgo.setMonth(now.getMonth() - 6);
+
+  return orders.filter(order => {
+    if (!order) return false;
+    if (order.timestamp) {
+      return new Date(order.timestamp) >= sixMonthsAgo;
+    }
+    if (order.id && !isNaN(Number(order.id))) {
+      const ts = Number(order.id);
+      if (ts > 1500000000000) {
+        return new Date(ts) >= sixMonthsAgo;
+      }
+    }
+    if (order.timeStr && typeof order.timeStr === 'string') {
+      const parts = order.timeStr.match(/(\d+)-(\d+)\s+(\d+):(\d+)/);
+      if (parts) {
+        const month = parseInt(parts[1], 10) - 1;
+        const day = parseInt(parts[2], 10);
+        const hour = parseInt(parts[3], 10);
+        const min = parseInt(parts[4], 10);
+        
+        const orderDate = new Date(now.getFullYear(), month, day, hour, min);
+        if (orderDate > now) {
+          orderDate.setFullYear(now.getFullYear() - 1);
+        }
+        return orderDate >= sixMonthsAgo;
+      }
+    }
+    return true;
+  });
+};
+
+const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
+  const R = 6371; // Earth radius in km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+    Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c; 
+};
+
 export default function HomeView({
   settings,
   stats,
@@ -100,6 +148,15 @@ export default function HomeView({
 
   // --- Online Application States & Real-time Subscription ---
   const [showOnlineAppModal, setShowOnlineAppModal] = useState(false);
+  
+  // --- Quick App Dispatch Modal States ---
+  const [showDispatchModal, setShowDispatchModal] = useState(false);
+  const [dispatchStartPlace, setDispatchStartPlace] = useState('');
+  const [dispatchPhone, setDispatchPhone] = useState('');
+  const [dispatchSuggestions, setDispatchSuggestions] = useState<any[]>([]);
+  const [dispatchSelectedCoords, setDispatchSelectedCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [dispatchingOrder, setDispatchingOrder] = useState(false);
+
   const [isCityDispatchEnabled, setIsCityDispatchEnabled] = useState<boolean | null>(null);
   const [onlineApp, setOnlineApp] = useState<any>(null);
   const [loadingApp, setLoadingApp] = useState(false);
@@ -128,7 +185,12 @@ export default function HomeView({
     try {
       const existing = localStorage.getItem('dd_driver_orders');
       if (existing) {
-        return JSON.parse(existing);
+        const parsed = JSON.parse(existing);
+        const filtered = filterOrdersWithinSixMonths(parsed);
+        if (filtered.length !== parsed.length) {
+          localStorage.setItem('dd_driver_orders', JSON.stringify(filtered));
+        }
+        return filtered;
       }
     } catch (e) {}
     // Seed with mock orders from the requested design
@@ -161,10 +223,11 @@ export default function HomeView({
         status: '已支付'
       }
     ];
+    const filteredDefault = filterOrdersWithinSixMonths(defaultOrders);
     try {
-      localStorage.setItem('dd_driver_orders', JSON.stringify(defaultOrders));
+      localStorage.setItem('dd_driver_orders', JSON.stringify(filteredDefault));
     } catch (e) {}
-    return defaultOrders;
+    return filteredDefault;
   });
 
   // Sync order history whenever it is shown
@@ -173,33 +236,35 @@ export default function HomeView({
       try {
         const existing = localStorage.getItem('dd_driver_orders');
         if (existing) {
-          setDriverOrders(JSON.parse(existing));
+          const parsed = JSON.parse(existing);
+          const filtered = filterOrdersWithinSixMonths(parsed);
+          setDriverOrders(filtered);
+          if (filtered.length !== parsed.length) {
+            localStorage.setItem('dd_driver_orders', JSON.stringify(filtered));
+          }
         }
       } catch (e) {}
     }
   }, [showOrderHistory]);
 
   const [swipedOrderId, setSwipedOrderId] = useState<string | null>(null);
-  const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
 
-  const handleSwipeStart = (clientX: number, clientY: number) => {
-    swipeStartRef.current = { x: clientX, y: clientY };
-  };
-
-  const handleSwipeEnd = (clientX: number, clientY: number, orderId: string) => {
-    if (!swipeStartRef.current) return;
-    const deltaX = clientX - swipeStartRef.current.x;
-    const deltaY = clientY - swipeStartRef.current.y;
-
-    if (deltaX < -40 && Math.abs(deltaY) < 30) {
-      setSwipedOrderId(orderId);
-    } else if (deltaX > 40 && Math.abs(deltaY) < 30) {
-      if (swipedOrderId === orderId) {
+  // Click on blank space should close any swiped order
+  useEffect(() => {
+    const handleDocumentClick = (e: MouseEvent | TouchEvent) => {
+      if (swipedOrderId === null) return;
+      const target = e.target as HTMLElement;
+      if (target && !target.closest('.delete-btn-container')) {
         setSwipedOrderId(null);
       }
-    }
-    swipeStartRef.current = null;
-  };
+    };
+    document.addEventListener('mousedown', handleDocumentClick);
+    document.addEventListener('touchstart', handleDocumentClick);
+    return () => {
+      document.removeEventListener('mousedown', handleDocumentClick);
+      document.removeEventListener('touchstart', handleDocumentClick);
+    };
+  }, [swipedOrderId]);
 
   const handleDeleteOrder = (orderId: string) => {
     try {
@@ -209,6 +274,11 @@ export default function HomeView({
       if (swipedOrderId === orderId) {
         setSwipedOrderId(null);
       }
+      // Decrease both monthly orders and total orders (represented by stats.myPoints) by 1
+      const nextPoints = Math.max(0, (stats.myPoints || 0) - 1);
+      onUpdateStats({
+        myPoints: nextPoints
+      });
     } catch (e) {
       console.error('Failed to delete order:', e);
     }
@@ -337,6 +407,188 @@ export default function HomeView({
       const next = [...viewedMessageIds, id];
       setViewedMessageIds(next);
       localStorage.setItem('dd_viewed_message_ids', JSON.stringify(next));
+    }
+  };
+
+  // --- Quick App Dispatch Logic ---
+  useEffect(() => {
+    const AMap = (window as any).AMap;
+    if (!AMap || !dispatchStartPlace.trim()) {
+      setDispatchSuggestions([]);
+      return;
+    }
+    const delayDebounce = setTimeout(() => {
+      AMap.plugin('AMap.AutoComplete', () => {
+        try {
+          const auto = new AMap.AutoComplete({
+            city: settings?.city || '银川市',
+            citylimit: true
+          });
+          auto.search(dispatchStartPlace, (status: string, result: any) => {
+            if (status === 'complete' && result.tips) {
+              setDispatchSuggestions(result.tips.filter((t: any) => t.id && t.name));
+            } else {
+              setDispatchSuggestions([]);
+            }
+          });
+        } catch (e) {
+          console.warn('AutoComplete plugin failed:', e);
+        }
+      });
+    }, 250);
+
+    return () => clearTimeout(delayDebounce);
+  }, [dispatchStartPlace, settings?.city]);
+
+  const handleSelectSuggestion = (tip: any) => {
+    setDispatchStartPlace(tip.name);
+    setDispatchSuggestions([]);
+    if (tip.location) {
+      setDispatchSelectedCoords({
+        lat: tip.location.lat,
+        lng: tip.location.lng
+      });
+    } else {
+      setDispatchSelectedCoords(null);
+    }
+  };
+
+  const handleOneKeyDispatch = async () => {
+    if (!dispatchStartPlace.trim()) {
+      alert("请输入乘客出发地！");
+      return;
+    }
+    if (!dispatchPhone.trim()) {
+      alert("请输入乘客手机号码！");
+      return;
+    }
+
+    setDispatchingOrder(true);
+    
+    try {
+      let finalCoords = dispatchSelectedCoords;
+
+      if (!finalCoords) {
+        if (dispatchSuggestions.length > 0 && dispatchSuggestions[0].location) {
+          const first = dispatchSuggestions[0];
+          finalCoords = { lat: first.location.lat, lng: first.location.lng };
+        } else {
+          try {
+            const geocodeResult = await new Promise<{ lat: number; lng: number }>((resolve, reject) => {
+              const AMap = (window as any).AMap;
+              if (AMap && AMap.Geocoder) {
+                const geocoder = new AMap.Geocoder({
+                  city: settings?.city || '银川市'
+                });
+                geocoder.getLocation(dispatchStartPlace, (status: string, result: any) => {
+                  if (status === 'complete' && result.geocodes && result.geocodes.length > 0) {
+                    const loc = result.geocodes[0].location;
+                    resolve({ lat: loc.lat, lng: loc.lng });
+                  } else {
+                    reject(new Error('未找到该地址的坐标'));
+                  }
+                });
+              } else {
+                reject(new Error('AMap Geocoder not available'));
+              }
+            });
+            finalCoords = geocodeResult;
+          } catch (geocodingError) {
+            console.warn("Geocoding failed, using city center fallback:", geocodingError);
+            const norm = (settings?.city || '银川市').trim();
+            const mapper: { [key: string]: { lat: number; lng: number } } = {
+              '银川': { lat: 38.487193, lng: 106.230912 },
+              '银川市': { lat: 38.487193, lng: 106.230912 },
+              '北京': { lat: 39.9042, lng: 116.4074 },
+              '北京市': { lat: 39.9042, lng: 116.4074 },
+              '上海': { lat: 31.2304, lng: 121.4737 },
+              '上海市': { lat: 31.2304, lng: 121.4737 },
+              '广州': { lat: 23.1291, lng: 113.2644 },
+              '广州市': { lat: 23.1291, lng: 113.2644 },
+              '深圳': { lat: 22.5431, lng: 114.0579 },
+              '深圳市': { lat: 22.5431, lng: 114.0579 },
+              '成都': { lat: 30.5728, lng: 104.0668 },
+              '成都市': { lat: 30.5728, lng: 104.0668 },
+              '杭州': { lat: 30.2741, lng: 120.1551 },
+              '杭州市': { lat: 30.2741, lng: 120.1551 },
+              '重庆': { lat: 29.5630, lng: 106.5516 },
+              '重庆市': { lat: 29.5630, lng: 106.5516 },
+              '长沙': { lat: 28.1963, lng: 112.9821 },
+              '长沙市': { lat: 28.1963, lng: 112.9821 },
+              '武汉': { lat: 30.5928, lng: 114.3055 },
+              '武汉市': { lat: 30.5928, lng: 114.3055 },
+              '西安': { lat: 34.3416, lng: 108.9402 },
+              '西安市': { lat: 34.3416, lng: 108.9402 },
+              '南京': { lat: 32.0603, lng: 118.7969 },
+              '南京市': { lat: 32.0603, lng: 118.7969 },
+              '天津': { lat: 39.1256, lng: 117.1902 },
+              '天津市': { lat: 39.1256, lng: 117.1902 }
+            };
+            const mapped = mapper[norm] || mapper[norm + '市'] || { lat: 38.487193, lng: 106.230912 };
+            finalCoords = mapped;
+          }
+        }
+      }
+
+      const driverSnapshot = await getDocs(collection(db, 'driver_users'));
+      const activeDrivers: any[] = [];
+      
+      driverSnapshot.forEach((doc) => {
+        const data = doc.data();
+        if (data && data.onlineOrdersEnabled && !data.isBanned) {
+          activeDrivers.push({
+            phone: doc.id,
+            name: data.driverName || data.customAppName || '特约代驾司机',
+            lat: Number(data.lat) || finalCoords!.lat,
+            lng: Number(data.lng) || finalCoords!.lng,
+          });
+        }
+      });
+
+      if (activeDrivers.length === 0) {
+        alert("⚠️ 当前云端数据库中没有在线听单的司机！请先让司机进入在线接单状态。");
+        setDispatchingOrder(false);
+        return;
+      }
+
+      let closestDriver = activeDrivers[0];
+      let minDistance = calculateDistance(finalCoords.lat, finalCoords.lng, closestDriver.lat, closestDriver.lng);
+
+      for (let i = 1; i < activeDrivers.length; i++) {
+        const d = activeDrivers[i];
+        const dist = calculateDistance(finalCoords.lat, finalCoords.lng, d.lat, d.lng);
+        if (dist < minDistance) {
+          minDistance = dist;
+          closestDriver = d;
+        }
+      }
+
+      const approxPriceVal = 34 + Math.floor(Math.random() * 30);
+      
+      await setDoc(doc(db, 'passenger_links', closestDriver.phone), {
+        passengerPhone: dispatchPhone,
+        startLocation: dispatchStartPlace,
+        destination: '一键派单：由司机根据现场口头协商规划行程',
+        status: 'submitted',
+        timestamp: Date.now(),
+        isValetOrder: true,
+        passengerLat: finalCoords.lat,
+        passengerLng: finalCoords.lng,
+        approxPrice: approxPriceVal
+      });
+
+      alert(`🎉 派单成功！\n\n系统已自动为您寻找直线距离最近的司机：\n- 司机姓名: ${closestDriver.name}\n- 司机手机: ${closestDriver.phone}\n- 直线距离: ${minDistance.toFixed(2)} 公里\n\n无论距离多远，有司机即刻成功秒同步指派！`);
+      
+      setDispatchStartPlace('');
+      setDispatchPhone('');
+      setDispatchSuggestions([]);
+      setDispatchSelectedCoords(null);
+      setShowDispatchModal(false);
+    } catch (err: any) {
+      console.error("Dispatch error:", err);
+      alert("❌ 派单通道执行失败: " + err.message);
+    } finally {
+      setDispatchingOrder(false);
     }
   };
 
@@ -872,7 +1124,7 @@ export default function HomeView({
           </div>
           <div>
             <div className="text-3xl font-bold font-display tracking-tight text-amber-400 mb-1">
-              {stats.todayIncome.toFixed(2)}
+              {(stats.todayIncome || 0).toFixed(2)}
             </div>
             <div className="text-[11px] text-gray-300 font-medium">今日收入</div>
           </div>
@@ -982,19 +1234,7 @@ export default function HomeView({
 
           <button 
             onClick={() => {
-              if (!settings.onlineOrdersEnabled) {
-                setLocalAlert({
-                  title: '听单未激活',
-                  message: '提示：请先开挂/开通「线上单开通」服务，方可激活平台自动分派派单机制监测！',
-                  type: 'info'
-                });
-                return;
-              }
-              setLocalAlert({
-                title: '队列监测正常',
-                message: '平台线上派单队列监测正常！当前无待处理推荐，请保持听单状态挂机等待。',
-                type: 'success'
-              });
+              setShowDispatchModal(true);
             }}
             className={`flex flex-col items-center justify-center relative transition-all duration-200 group ${
               settings.onlineOrdersEnabled ? 'opacity-100' : 'opacity-40'
@@ -1401,6 +1641,167 @@ export default function HomeView({
                 我知道了，标记全部已读并关闭
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 8.5 Quick One-key Dispatch Overlay Screen Page */}
+      {showDispatchModal && (
+        <div className="absolute inset-0 bg-slate-50 z-50 flex flex-col overflow-hidden animate-in slide-in-from-bottom duration-300">
+          {/* Page Toolbar Header */}
+          <div className="bg-slate-900 text-white py-3.5 px-4 flex items-center justify-between shrink-0 border-b border-slate-800">
+            <div className="flex items-center space-x-2">
+              <div className="w-8 h-8 rounded-full bg-teal-500/10 flex items-center justify-center border border-teal-500/20 text-teal-400">
+                <ClipboardCheck className="w-4 h-4" />
+              </div>
+              <div className="text-left">
+                <h3 className="font-extrabold text-xs text-white">平台快捷派单</h3>
+                <span className="text-[9px] text-slate-400 font-normal">一键极速调配直线距离最近司机</span>
+              </div>
+            </div>
+            <button 
+              onClick={() => {
+                setShowDispatchModal(false);
+                setDispatchStartPlace('');
+                setDispatchPhone('');
+                setDispatchSuggestions([]);
+                setDispatchSelectedCoords(null);
+              }}
+              className="p-1.5 rounded-full hover:bg-slate-800 text-slate-400 hover:text-white transition-all active:scale-90"
+            >
+              <X className="w-4.5 h-4.5" />
+            </button>
+          </div>
+
+          {/* Page Content */}
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+            
+            {/* Banner info */}
+            <div className="bg-teal-50 border border-teal-150 rounded-xl p-3 flex items-start space-x-2">
+              <AlertCircle className="w-4.5 h-4.5 text-teal-600 shrink-0 mt-0.5" />
+              <div className="text-left">
+                <p className="text-[11px] font-bold text-teal-800">智能匹配规则</p>
+                <p className="text-[9.5px] text-teal-600 mt-0.5 leading-relaxed">
+                  系统会自动解析输入的乘客出发地地址并转化为精确地理坐标，并在云端数据库（Firestore）中实时扫描全部在线且未处于封禁状态的代驾司机。无论距离多远，只要有符合条件的司机，系统就将直线距离最近的一位秒同步派发。
+                </p>
+              </div>
+            </div>
+
+            {/* Form */}
+            <div className="space-y-3.5">
+              
+              {/* Departure Input */}
+              <div className="space-y-1 text-left relative">
+                <label className="text-[10px] font-black text-slate-500 tracking-wider block">乘客出发地 (搜索联想)</label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <MapPin className="h-4 w-4 text-slate-400" />
+                  </div>
+                  <input
+                    type="text"
+                    value={dispatchStartPlace}
+                    onChange={(e) => {
+                      setDispatchStartPlace(e.target.value);
+                      setDispatchSelectedCoords(null);
+                    }}
+                    placeholder="请输入或搜索乘客出发地地址..."
+                    className="block w-full pl-9 pr-3 py-2.5 text-xs font-bold text-slate-800 placeholder-slate-400 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500 shadow-xs"
+                  />
+                  {dispatchStartPlace && (
+                    <button 
+                      onClick={() => {
+                        setDispatchStartPlace('');
+                        setDispatchSuggestions([]);
+                        setDispatchSelectedCoords(null);
+                      }}
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Suggestions dropdown */}
+                {dispatchSuggestions.length > 0 && (
+                  <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-50 max-h-48 overflow-y-auto divide-y divide-slate-100">
+                    {dispatchSuggestions.map((tip, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => handleSelectSuggestion(tip)}
+                        className="w-full text-left px-3 py-2.5 hover:bg-slate-50 flex flex-col transition-all"
+                      >
+                        <span className="text-xs font-bold text-slate-800">{tip.name}</span>
+                        <span className="text-[9px] text-slate-400 mt-0.5">{tip.district || (settings?.city || '未知区域')}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Passenger Phone Input */}
+              <div className="space-y-1 text-left">
+                <label className="text-[10px] font-black text-slate-500 tracking-wider block">乘客手机号码</label>
+                <input
+                  type="tel"
+                  value={dispatchPhone}
+                  onChange={(e) => setDispatchPhone(e.target.value)}
+                  placeholder="请输入接单乘客手机号码..."
+                  className="block w-full px-3 py-2.5 text-xs font-bold text-slate-800 placeholder-slate-400 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500 shadow-xs"
+                />
+              </div>
+
+            </div>
+
+            {/* Quick pre-fill buttons */}
+            <div className="bg-slate-100 border border-slate-150/50 rounded-xl p-3 text-left">
+              <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-wider block mb-2">快速填充推荐</span>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  { name: '银川火车站', phone: '13812345678' },
+                  { name: '金凤万达广场东门', phone: '13988887777' },
+                  { name: '建发大阅城', phone: '18866665555' },
+                  { name: '悦海新天地', phone: '15599990000' }
+                ].map((item, index) => (
+                  <button
+                    key={index}
+                    onClick={() => {
+                      setDispatchStartPlace(item.name);
+                      setDispatchPhone(item.phone);
+                      setDispatchSuggestions([]);
+                    }}
+                    className="px-2 py-1 text-[9.5px] font-extrabold bg-white border border-slate-200 text-slate-600 rounded-lg hover:border-teal-500 hover:text-teal-600 transition-all shadow-2xs"
+                  >
+                    {item.name} ({item.phone.slice(-4)})
+                  </button>
+                ))}
+              </div>
+            </div>
+
+          </div>
+
+          {/* Footer Submit Area */}
+          <div className="p-4 bg-white border-t border-slate-100 shrink-0">
+            <button
+              disabled={dispatchingOrder}
+              onClick={handleOneKeyDispatch}
+              className={`w-full py-3 rounded-xl font-bold text-xs text-white transition-all shadow-md flex items-center justify-center space-x-2 active:scale-98 ${
+                dispatchingOrder
+                  ? 'bg-slate-400 cursor-not-allowed'
+                  : 'bg-teal-500 hover:bg-teal-600 shadow-teal-500/10'
+              }`}
+            >
+              {dispatchingOrder ? (
+                <>
+                  <span className="animate-spin rounded-full h-3.5 w-3.5 border-2 border-white border-t-transparent"></span>
+                  <span>正在匹配直线距离最近司机...</span>
+                </>
+              ) : (
+                <>
+                  <ClipboardCheck className="w-4 h-4" />
+                  <span>一键极速派单</span>
+                </>
+              )}
+            </button>
           </div>
         </div>
       )}
@@ -2204,20 +2605,6 @@ export default function HomeView({
             </div>
           </section>
 
-          {/* Month Indicator Bar */}
-          <div className="bg-slate-100/60 dark:bg-zinc-950 px-4 py-2.5 flex justify-between items-center text-slate-500 dark:text-slate-400 shrink-0">
-            <span className="text-sm font-bold font-mono">
-              {(() => {
-                const now = new Date();
-                return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-              })()}
-            </span>
-            <button className="flex items-center space-x-1 text-xs font-bold text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors">
-              <Calendar className="w-4 h-4" />
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-
           {/* Main Orders List (Scrollable) */}
           <main className="flex-1 overflow-y-auto pb-6 space-y-3 p-4">
             {driverOrders.length === 0 ? (
@@ -2239,20 +2626,26 @@ export default function HomeView({
                       e.stopPropagation();
                       handleDeleteOrder(order.id);
                     }}
-                    className="absolute right-0 top-0 bottom-0 w-20 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white flex flex-col items-center justify-center space-y-1 transition-all z-0"
+                    className="absolute right-0 top-0 bottom-0 w-20 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white flex flex-col items-center justify-center space-y-1 transition-all z-0 delete-btn-container"
                   >
                     <Trash2 className="w-4.5 h-4.5 text-white animate-bounce duration-1000" />
                     <span className="text-[10px] font-black tracking-wider text-white">删除</span>
                   </button>
 
-                  {/* Swipable content wrapper */}
+                   {/* Clickable content wrapper */}
                   <div 
-                    onTouchStart={(e) => handleSwipeStart(e.touches[0].clientX, e.touches[0].clientY)}
-                    onTouchEnd={(e) => handleSwipeEnd(e.changedTouches[0].clientX, e.changedTouches[0].clientY, order.id)}
-                    onMouseDown={(e) => handleSwipeStart(e.clientX, e.clientY)}
-                    onMouseUp={(e) => handleSwipeEnd(e.clientX, e.clientY, order.id)}
-                    style={{ transform: swipedOrderId === order.id ? 'translateX(-80px)' : 'translateX(0px)' }}
-                    className="bg-white dark:bg-zinc-900 relative rounded-2xl border border-slate-100 dark:border-zinc-800 p-5 shadow-xs transition-transform duration-300 ease-out hover:border-teal-500/30 z-10 select-none cursor-grab active:cursor-grabbing"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (swipedOrderId === order.id) {
+                        setSwipedOrderId(null);
+                      } else {
+                        setSwipedOrderId(order.id);
+                      }
+                    }}
+                    style={{ 
+                      transform: swipedOrderId === order.id ? 'translateX(-80px)' : 'translateX(0px)'
+                    }}
+                    className="bg-white dark:bg-zinc-900 relative rounded-2xl border border-slate-100 dark:border-zinc-800 p-5 shadow-xs hover:border-teal-500/30 z-10 select-none cursor-pointer transition-transform duration-300 ease-out"
                   >
                     {/* Timeline path line (green to orange vertical line) */}
                     <div className="absolute left-[25px] top-[74px] bottom-[74px] w-[1px] bg-slate-100 dark:bg-zinc-800 z-0 pointer-events-none"></div>
