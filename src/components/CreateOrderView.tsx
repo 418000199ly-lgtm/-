@@ -1248,39 +1248,12 @@ export default function CreateOrderView({
                 <span className="text-[#189F95] font-black">•</span>
                 <span>每过 <span className="font-bold text-orange-500">3分钟</span> 二维码将自动更新，安全防作弊，请及时核查。</span>
               </div>
-              <div className="flex items-start gap-1.5">
-                <span className="text-[#189F95] font-black">•</span>
-                <span>扫码匹配连线完成后，即可点击下方按钮快速一键代下单。</span>
-              </div>
             </div>
 
 
 
             {/* Actions Panel */}
             <div className="w-full flex flex-col gap-2 pt-1 font-sans">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowSimulatedScanner(true);
-                }}
-                className="w-full py-3 bg-indigo-650 hover:bg-indigo-700 text-white rounded-xl font-black text-sm tracking-wide shadow-md shadow-indigo-600/25 flex items-center justify-center gap-1.5 active:scale-[0.98] transition-all cursor-pointer"
-              >
-                📱 模拟手机端扫码 (中国大陆免翻墙)
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setPhoneNumber('186-0951-8888');
-                  setDestination('新百大楼(解放东街-2号门)');
-                  setScanSuccessMsg(true);
-                  setShowQrModal(false);
-                }}
-                className="w-full py-2 bg-[#189F95]/10 hover:bg-[#189F95]/20 text-[#189F95] rounded-xl font-bold text-xs tracking-wide flex items-center justify-center gap-1 active:scale-[0.98] transition-all cursor-pointer"
-              >
-                <CheckCircle2 className="w-4 h-4" />
-                仅快速一键填入模拟数据
-              </button>
               
               <button
                 type="button"

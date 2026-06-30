@@ -30,7 +30,8 @@ import {
   Flame,
   Camera,
   Clock,
-  Trash2
+  Trash2,
+  Search
 } from 'lucide-react';
 import { ChauffeurSettings, DriverStats, TripState, BillingRules, checkVipActive } from '../types';
 import DriverIllustration from './DriverIllustration';
@@ -164,6 +165,17 @@ export default function HomeView({
   const [dispatchSuggestions, setDispatchSuggestions] = useState<any[]>([]);
   const [dispatchSelectedCoords, setDispatchSelectedCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [dispatchingOrder, setDispatchingOrder] = useState(false);
+  const [dispatchCity, setDispatchCity] = useState(effectiveCity);
+  const [dispatchCityQuery, setDispatchCityQuery] = useState('');
+  const [showDispatchCityDropdown, setShowDispatchCityDropdown] = useState(false);
+
+  useEffect(() => {
+    if (showDispatchModal) {
+      setDispatchCity(effectiveCity);
+      setDispatchCityQuery('');
+      setShowDispatchCityDropdown(false);
+    }
+  }, [showDispatchModal, effectiveCity]);
 
   // --- VIP Purchase Modal States ---
   const [showVipPurchaseModal, setShowVipPurchaseModal] = useState(false);
@@ -436,7 +448,7 @@ export default function HomeView({
       AMap.plugin('AMap.AutoComplete', () => {
         try {
           const auto = new AMap.AutoComplete({
-            city: effectiveCity,
+            city: dispatchCity,
             citylimit: true
           });
           auto.search(dispatchStartPlace, (status: string, result: any) => {
@@ -453,7 +465,7 @@ export default function HomeView({
     }, 250);
 
     return () => clearTimeout(delayDebounce);
-  }, [dispatchStartPlace, effectiveCity]);
+  }, [dispatchStartPlace, dispatchCity]);
 
   const handleSelectSuggestion = (tip: any) => {
     setDispatchStartPlace(tip.name);
@@ -504,7 +516,7 @@ export default function HomeView({
               const AMap = (window as any).AMap;
               if (AMap && AMap.Geocoder) {
                 const geocoder = new AMap.Geocoder({
-                  city: effectiveCity
+                  city: dispatchCity
                 });
                 geocoder.getLocation(dispatchStartPlace, (status: string, result: any) => {
                   if (status === 'complete' && result.geocodes && result.geocodes.length > 0) {
@@ -521,7 +533,7 @@ export default function HomeView({
             finalCoords = geocodeResult;
           } catch (geocodingError) {
             console.warn("Geocoding failed, using city center fallback:", geocodingError);
-            const norm = effectiveCity.trim();
+            const norm = dispatchCity.trim();
             const mapper: { [key: string]: { lat: number; lng: number } } = {
               '银川': { lat: 38.487193, lng: 106.230912 },
               '银川市': { lat: 38.487193, lng: 106.230912 },
@@ -725,6 +737,11 @@ export default function HomeView({
             setSliderPos(0);
             return;
           }
+          if (userRole !== '开发者司机' && (!onlineApp || onlineApp.status !== 'approved')) {
+            alert("⚠️ 无法上线听单！只有通过了「线上听单资质认证」审批的司机才能上线听单。请在首页点击「线上单开通」提交资料并等待管理员审批通过。");
+            setSliderPos(0);
+            return;
+          }
           const isVip = checkVipActive(settings.vipExpiry);
           if (!isVip && stats.todayOrders >= 2) {
             alert('🔒 提示：非VIP会员每日限制报单次数已用完（每天限额2次，明早6:00自动恢复，激活VIP解除限制）。');
@@ -775,6 +792,11 @@ export default function HomeView({
           if (!isOnline) {
             if (settings.isBanned) {
               alert("⚠️ 无法上线！因账户违规，您的账号已被管理员封停。封停期间无法上线听单或接单！");
+              setSliderPos(0);
+              return;
+            }
+            if (userRole !== '开发者司机' && (!onlineApp || onlineApp.status !== 'approved')) {
+              alert("⚠️ 无法上线听单！只有通过了「线上听单资质认证」审批的司机才能上线听单。请在首页点击「线上单开通」提交资料并等待管理员审批通过。");
               setSliderPos(0);
               return;
             }
@@ -1329,7 +1351,7 @@ export default function HomeView({
             onClick={() => {
               const isManagementTeam = userRole === '开发者司机' || userRole === '城市老板司机' || userRole === '城市管理司机' || userRole === '城市派单员司机';
               if (!isManagementTeam) {
-                alert('您不是管理团队，无权限派单');
+                alert('您不是管理，无权限。');
                 return;
               }
               setShowDispatchModal(true);
@@ -1534,16 +1556,6 @@ export default function HomeView({
                   disabled={isMatching}
                 />
               </div>
-
-              {/* Helpful suggestions */}
-              {!modalMessage && !isMatching && (
-                <div className="bg-teal-50/50 rounded-xl p-3 border border-dashed border-teal-200/60">
-                  <div className="text-[10px] font-bold text-teal-800 mb-1">💡 云联锁激活说明：</div>
-                  <p className="text-[9.5px] leading-relaxed text-teal-700 font-medium">
-                    本卡密兑换采用全云端物理级实联结构。请右侧「运营管理后台」一键极速点击“生成卡码”，随后将激活码粘贴至此，即时绑定、全网实收稽核，无缝贯通。
-                  </p>
-                </div>
-              )}
 
               {/* Status Message */}
               {modalMessage && (
@@ -2346,25 +2358,6 @@ export default function HomeView({
             ) : (
               <form onSubmit={handleOnlineAppSubmit} className="space-y-4">
                 
-                {/* Speed-run Autocompletion Simulator for quick applet audit / testing */}
-                <div className="bg-slate-900 text-white rounded-2xl p-3 border border-slate-800 space-y-2 text-left">
-                  <div className="flex items-center justify-between font-extrabold text-[10px]">
-                    <span className="text-[10.5px] font-black text-amber-400 flex items-center gap-1">
-                      ⚡ 开发者快捷沙箱工具箱 (Auditor Sandbox)
-                    </span>
-                  </div>
-                  <p className="text-[9.5px] text-slate-400 leading-relaxed">
-                    考虑到您在 AI Studio 网页沙盒测试，通常没有准备真实身份证/驾驶证照片，点按下方按钮即可在1秒内使用 SVG 自动合成全套仿真证件照，省去寻找本地照片的繁育！
-                  </p>
-                  <button
-                    type="button"
-                    onClick={handleAutoFillAndSimulate}
-                    className="w-full py-2 bg-gradient-to-r from-teal-500 to-indigo-600 hover:opacity-90 active:scale-98 transition-all rounded-xl text-[11px] font-black text-white flex items-center justify-center space-x-1 cursor-pointer"
-                  >
-                    <span>🎯 一键填充真实仿真数据 + 合成四张证件照</span>
-                  </button>
-                </div>
-
                 {/* FORM INPUTS */}
                 <div className="bg-white rounded-2xl p-4 border border-slate-200 space-y-3 shadow-2xs text-left">
                   <div className="flex items-center space-x-1.5 border-b border-slate-50 pb-2">

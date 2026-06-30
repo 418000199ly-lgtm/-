@@ -37,6 +37,9 @@ function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: numbe
 
 interface DispatchValetOrderProps {
   onShowToast: (msg: string) => void;
+  userPhone?: string | null;
+  userRole?: string;
+  userTeamCity?: string;
 }
 
 interface SimulatedDriver {
@@ -48,9 +51,29 @@ interface SimulatedDriver {
   avatar: string;
 }
 
-export default function DispatchValetOrder({ onShowToast }: DispatchValetOrderProps) {
+export default function DispatchValetOrder({ 
+  onShowToast,
+  userPhone = null,
+  userRole = '普通司机',
+  userTeamCity = ''
+}: DispatchValetOrderProps) {
+  const isDeveloper = userRole === '开发者司机';
+
+  const getInitialCity = () => {
+    if (isDeveloper || !userTeamCity) return '银川市';
+    return userTeamCity.endsWith('市') ? userTeamCity : `${userTeamCity}市`;
+  };
+
   // 1. 城市选择与自动派单配置状态
-  const [selectedCity, setSelectedCity] = useState('银川市');
+  const [selectedCity, setSelectedCity] = useState(getInitialCity);
+
+  // Sync selectedCity if userTeamCity changes and we are not a developer
+  useEffect(() => {
+    if (!isDeveloper && userTeamCity) {
+      const normalizedCity = userTeamCity.endsWith('市') ? userTeamCity : `${userTeamCity}市`;
+      setSelectedCity(normalizedCity);
+    }
+  }, [userTeamCity, isDeveloper]);
   const [cityDispatchEnabled, setCityDispatchEnabled] = useState(false);
   const [cityConfigLoading, setCityConfigLoading] = useState(false);
   const [citySearchQuery, setCitySearchQuery] = useState('');
@@ -98,10 +121,16 @@ export default function DispatchValetOrder({ onShowToast }: DispatchValetOrderPr
   const [dispatchResult, setDispatchResult] = useState<any | null>(null);
 
   // 六、行政区域过滤
-  const filteredCities = ALL_CITIES_FLAT.filter(city => 
-    city.name.includes(citySearchQuery) || 
-    city.pinyin.toLowerCase().includes(citySearchQuery.toLowerCase())
-  );
+  const filteredCities = ALL_CITIES_FLAT.filter(city => {
+    if (!isDeveloper && userTeamCity) {
+      const normalizedTeamCity = userTeamCity.endsWith('市') ? userTeamCity.slice(0, -1) : userTeamCity;
+      return city.name === normalizedTeamCity;
+    }
+    return (
+      city.name.includes(citySearchQuery) || 
+      city.pinyin.toLowerCase().includes(citySearchQuery.toLowerCase())
+    );
+  });
 
   // ==================== 核心GPS定位自动获取与同步机制 ====================
   const handleMapLocateSelf = () => {
@@ -915,11 +944,21 @@ export default function DispatchValetOrder({ onShowToast }: DispatchValetOrderPr
             </label>
             <button
               type="button"
-              onClick={() => setShowCityDropdown(!showCityDropdown)}
+              onClick={() => {
+                if (!isDeveloper) {
+                  onShowToast('⚠️ 您仅拥有所属城市辖区的派单权限');
+                  return;
+                }
+                setShowCityDropdown(!showCityDropdown);
+              }}
               className="w-full h-11 px-4 bg-[#0d0e15] border border-slate-850 hover:border-slate-800 rounded-xl text-xs font-black text-slate-200 flex items-center justify-between transition-colors cursor-pointer"
             >
               <span>📍 {selectedCity}</span>
-              <span className="text-[10px] text-[#189F95]">切换城市 ➔</span>
+              {isDeveloper ? (
+                <span className="text-[10px] text-[#189F95]">切换城市 ➔</span>
+              ) : (
+                <span className="text-[10px] text-slate-500">专属管辖 🔒</span>
+              )}
             </button>
 
             {showCityDropdown && (

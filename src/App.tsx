@@ -26,7 +26,7 @@ import {
 import { Sparkles, CheckCircle, Database, Smartphone, Users } from 'lucide-react';
 import AdminPanel from './components/AdminPanel';
 import LoginView from './components/LoginView';
-import { db, doc, onSnapshot, setDoc, deleteDoc } from './lib/dbProxy';
+import { db, doc, onSnapshot, setDoc, deleteDoc, collection } from './lib/dbProxy';
 import { IncomingOrderOverlay } from './components/IncomingOrderOverlay';
 
 const getCityCenterCoords = (cityName: string): { lat: number; lng: number } => {
@@ -190,6 +190,35 @@ export default function App() {
   const [userPhone, setUserPhone] = useState<string | null>(() => {
     return localStorage.getItem('dd_user_phone');
   });
+
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('isAdminAuthenticated') === 'true';
+    }
+    return false;
+  });
+
+  const [teamMembers, setTeamMembers] = useState<any[]>([]);
+
+  useEffect(() => {
+    const q = collection(db, 'team_members');
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach((docSnap) => {
+        list.push({ id: docSnap.id, ...docSnap.data() });
+      });
+      setTeamMembers(list);
+    }, (error) => {
+      console.error("Error subscribing to team members in App:", error);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const loggedInMember = teamMembers.find(m => m.phone === userPhone);
+  const userRole = (isAdminAuthenticated || userPhone === '15509601222')
+    ? '开发者司机'
+    : (loggedInMember ? loggedInMember.role : '普通司机');
+  const userTeamCity = loggedInMember ? loggedInMember.city : '';
   const [incomingOrder, setIncomingOrder] = useState<any>(null);
   const [activeOnlineOrder, setActiveOnlineOrder] = useState<any>(null);
   const [driverCoords, setDriverCoords] = useState<{ lat: number; lng: number }>({
@@ -491,6 +520,14 @@ export default function App() {
       alert('⚠️ 系统警告：您的账号已被管理员封停。已强制为您切换至下线状态，封停期间您将无法接单或开启线上听单服务！如有异议请联系客服。');
     }
   }, [settings.isBanned, isOnline]);
+
+  // Active Online Listening Qualification Listener: automatically force-offline drivers without active approval (except developer drivers)
+  useEffect(() => {
+    if (userRole !== '开发者司机' && !settings.onlineOrdersEnabled && isOnline) {
+      setIsOnline(false);
+      alert('⚠️ 听单资质已失效：您的账号尚未通过「线上听单资质认证」或开通资格已被管理员收回。已强制为您切换至下线状态！');
+    }
+  }, [settings.onlineOrdersEnabled, isOnline, userRole]);
 
   // Listen for real-time incoming passenger orders from passenger self-service scans or admin dispatching
   useEffect(() => {
@@ -874,6 +911,8 @@ export default function App() {
             isOnline={isOnline}
             onUpdateSettings={handleUpdateSettings}
             userPhone={userPhone}
+            userRole={userRole}
+            userTeamCity={userTeamCity}
             onLogout={handleLogout}
             driverCoords={driverCoords}
           />
@@ -967,7 +1006,13 @@ export default function App() {
           mobileActiveTab === 'admin' ? 'flex-1 w-full' : 'hidden lg:flex lg:flex-1'
         }`}>
           <div className="flex-1 overflow-y-auto">
-            <AdminPanel />
+            <AdminPanel 
+              userPhone={userPhone}
+              userRole={userRole}
+              userTeamCity={userTeamCity}
+              isAdminAuthenticated={isAdminAuthenticated}
+              setIsAdminAuthenticated={setIsAdminAuthenticated}
+            />
           </div>
         </div>
 

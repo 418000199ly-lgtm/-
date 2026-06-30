@@ -82,19 +82,32 @@ interface AdminPanelProps {
   userPhone?: string | null;
   userRole?: string;
   userTeamCity?: string;
+  isAdminAuthenticated?: boolean;
+  setIsAdminAuthenticated?: (val: boolean) => void;
 }
 
 export default function AdminPanel({
   userPhone = null,
   userRole = '普通司机',
-  userTeamCity = ''
+  userTeamCity = '',
+  isAdminAuthenticated: propIsAdminAuthenticated,
+  setIsAdminAuthenticated: propSetIsAdminAuthenticated
 }: AdminPanelProps = {}) {
-  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(() => {
+  const [localIsAdminAuthenticated, setLocalIsAdminAuthenticated] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('isAdminAuthenticated') === 'true';
     }
     return false;
   });
+
+  const isAdminAuthenticated = propIsAdminAuthenticated !== undefined ? propIsAdminAuthenticated : localIsAdminAuthenticated;
+  const setIsAdminAuthenticated = (val: boolean) => {
+    if (propSetIsAdminAuthenticated) {
+      propSetIsAdminAuthenticated(val);
+    } else {
+      setLocalIsAdminAuthenticated(val);
+    }
+  };
   const [adminUsername, setAdminUsername] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
   const [loginError, setLoginError] = useState('');
@@ -125,12 +138,18 @@ export default function AdminPanel({
   const [memberSearchQuery, setMemberSearchQuery] = useState('');
   const [savingMember, setSavingMember] = useState(false);
   const [chosenCity, setChosenCity] = useState('');
+  const [showTeamCityDropdown, setShowTeamCityDropdown] = useState(false);
+  const [teamCitySearchQuery, setTeamCitySearchQuery] = useState('');
 
   // Active user's team status based on real-time DB data or fallback props
   const loggedInMember = teamMembers.find(m => m.phone === userPhone);
-  const activeRole = loggedInMember ? loggedInMember.role : (isAdminAuthenticated ? '开发者司机' : '普通司机');
+  const activeRole = (isAdminAuthenticated || userPhone === '15509601222')
+    ? '开发者司机'
+    : (loggedInMember ? loggedInMember.role : '普通司机');
   const activeCity = loggedInMember ? loggedInMember.city : '';
-  const isAuth = isAdminAuthenticated || (userPhone && activeRole !== '普通司机');
+  const isAuth = isAdminAuthenticated || 
+                 (userPhone === '15509601222') || 
+                 (loggedInMember && loggedInMember.role !== '普通司机');
 
   // Online Applications State Managers
   const [applications, setApplications] = useState<any[]>([]);
@@ -3325,7 +3344,12 @@ export default function AdminPanel({
 
         {/* 8. VALET ORDER DISPATCH TAB */}
         {activeTab === 'dispatch' && (
-          <DispatchValetOrder onShowToast={triggerToast} />
+          <DispatchValetOrder 
+            onShowToast={triggerToast} 
+            userPhone={userPhone}
+            userRole={activeRole}
+            userTeamCity={activeCity}
+          />
         )}
 
         {/* 9. ONLINE BILLING RULES TAB */}
@@ -3382,6 +3406,63 @@ export default function AdminPanel({
                       <option value="普通司机">普通司机</option>
                     </select>
                   </div>
+
+                  {/* Operating Jurisdiction City Selection (Only for Developer creating non-developer) */}
+                  {activeRole === '开发者司机' && memberRole !== '开发者司机' && (
+                    <div className="space-y-1.5 relative z-50">
+                      <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
+                        所属运营辖区城市
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setShowTeamCityDropdown(!showTeamCityDropdown)}
+                        className="w-full h-11 px-4 bg-[#090b11] border border-slate-900 hover:border-slate-800 rounded-xl text-xs font-bold text-slate-200 flex items-center justify-between transition-colors cursor-pointer"
+                      >
+                        <span className="flex items-center space-x-1.5">
+                          <span>📍</span>
+                          <span>{chosenCity ? `${chosenCity.endsWith('市') ? chosenCity : chosenCity + '市'}` : '请选择城市...'}</span>
+                        </span>
+                        <span className="text-[10px] text-orange-400 font-extrabold bg-orange-500/10 px-2 py-0.5 rounded-md">选择 ➔</span>
+                      </button>
+
+                      {showTeamCityDropdown && (
+                        <div className="absolute top-full left-0 right-0 z-50 mt-1 bg-[#12141F] border border-slate-800 rounded-xl shadow-2xl p-2.5 flex flex-col space-y-2 animate-in fade-in duration-200">
+                          <div className="relative">
+                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
+                            <input
+                              type="text"
+                              placeholder="输入城市名或拼音搜索..."
+                              value={teamCitySearchQuery}
+                              onChange={(e) => setTeamCitySearchQuery(e.target.value)}
+                              className="w-full pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-900 rounded-lg text-xs focus:outline-none focus:border-orange-500 text-slate-200 font-medium"
+                            />
+                          </div>
+
+                          <div className="max-h-40 overflow-y-auto divide-y divide-slate-900/40 flex flex-col">
+                            {ALL_CITIES_FLAT.filter(city => 
+                              city.name.includes(teamCitySearchQuery.trim()) || 
+                              city.pinyin.toLowerCase().includes(teamCitySearchQuery.trim().toLowerCase())
+                            ).map((city, idx) => (
+                              <button
+                                key={idx}
+                                type="button"
+                                onClick={() => {
+                                  const normalized = city.name.endsWith('市') ? city.name : `${city.name}市`;
+                                  setChosenCity(normalized);
+                                  setShowTeamCityDropdown(false);
+                                  setTeamCitySearchQuery('');
+                                }}
+                                className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-950 hover:text-orange-400 transition-all font-bold flex items-center justify-between"
+                              >
+                                <span>{city.name}</span>
+                                <span className="text-[9px] text-slate-500 font-normal uppercase">{city.pinyin}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Remarks Input */}
                   <div className="space-y-1.5">

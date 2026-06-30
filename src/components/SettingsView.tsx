@@ -974,53 +974,7 @@ export default function SettingsView({
 
         </div>
 
-        {/* Card 3.5: Cloudflare / Custom DNS Network proxy options */}
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-xs p-4 space-y-3.5 overflow-hidden">
-          <div className="flex items-center space-x-2">
-            <span className="text-sm font-semibold text-gray-700 flex items-center gap-1">
-              ☁️ 云端数据接入与 Cloudflare 加速
-            </span>
-            <span className="text-[9px] bg-teal-50 text-teal-600 px-1.5 py-0.5 rounded font-bold border border-teal-100 uppercase tracking-widest leading-none">
-              极速
-            </span>
-          </div>
 
-          <p className="text-[11px] text-gray-400 leading-relaxed font-sans font-medium">
-            提示：针对中国大陆网络环境下 Firebase 被阻断的问题，我们已将整个管理后台与数据读写默认托管在 Express 的中端服务器中（免VPN直连，延迟极低）。
-            如果您拥有自己的域名或 Cloudflare 账号，也可将其部署为 Worker，并在此绑定以实现全中端加速！
-          </p>
-
-          <div className="space-y-1.5">
-            <label className="text-[10px] uppercase font-bold text-gray-400 tracking-wider flex justify-between">
-              <span>Cloudflare Worker 或自定义代理 URL</span>
-              <span className="text-gray-450 font-medium">留空则自动走系统默认中极</span>
-            </label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={cloudflareUrl}
-                onChange={(e) => saveCloudflareUrl(e.target.value)}
-                placeholder="例如 https://daijia.ccwu.workers.dev"
-                className="flex-1 px-3 py-2.5 border border-gray-200 rounded-xl text-xs focus:outline-hidden focus:border-teal-500 bg-white text-gray-800 placeholder:text-gray-300 font-mono"
-              />
-              <button
-                type="button"
-                onClick={handleTestConnection}
-                disabled={testingConnection}
-                className="px-3 bg-teal-600 hover:bg-teal-700 active:scale-95 disabled:opacity-50 text-white rounded-xl text-xs font-semibold transition-all shrink-0 flex items-center justify-center min-w-[70px] cursor-pointer shadow-xs shadow-teal-500/10"
-              >
-                {testingConnection ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  '连通测试'
-                )}
-              </button>
-            </div>
-            <p className="text-[9px] text-gray-400 leading-normal">
-              部署参考：可在本项目根目录下查阅 <code className="bg-slate-100 px-1 rounded text-[8px] font-mono text-gray-600 font-bold">cloudflare_worker.js</code> 现成代码模板，直接一键复制到您的 Cloudflare 后台中保存部署即可！
-            </p>
-          </div>
-        </div>
 
         {/* Card 4: Session Security (Logout) */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-xs overflow-hidden">
